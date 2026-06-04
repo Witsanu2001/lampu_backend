@@ -25,4 +25,4 @@ jobs:
           service: api-gateway
           region: asia-southeast1
           source: ./api-gateway
-          flags: '--allow-unauthenticated --set-env-vars=USER_SERVICE_URL=https://user-service-XXXXX.asia-southeast1.run.app'
+          flags: '--allow-unauthenticated --set-env-vars=USER_SERVICE_URL=https://user-service-879165280409.asia-southeast1.run.app'
