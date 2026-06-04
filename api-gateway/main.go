@@ -56,6 +56,8 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// test
+
 func authMiddleware(app *firebase.App, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
