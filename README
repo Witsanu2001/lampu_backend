@@ -1,4 +1,0 @@
-# ให้แน่ใจว่าอยู่ในโฟลเดอร์ lampu_backend/api-gateway
-gcloud run deploy api-gateway --source . --region asia-southeast1 --allow-unauthenticated
-# ให้แน่ใจว่าอยู่ในโฟลเดอร์ lampu_backend/users
-gcloud run deploy user-service --source . --region asia-southeast1 --allow-unauthenticated

@@ -56,6 +56,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // authMiddleware เป็นฟังก์ชันสกัดกั้นเพื่อตรวจสอบ Token ก่อนเข้าถึง API
+// authMiddleware เป็นฟังก์ชันสกัดกั้นเพื่อตรวจสอบ Token ก่อนเข้าถึง API
 func authMiddleware(app *firebase.App, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -64,23 +65,27 @@ func authMiddleware(app *firebase.App, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// รูปแบบคือ "Bearer <token>"
-		splitToken := strings.Split(authHeader, "Bearer ")
-		if len(splitToken) != 2 {
+		// 🌟 1. ดึงเฉพาะ Token ออกมา โดยตัดคำว่า "Bearer " ทิ้งไป
+		idToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// ถ้าตัดแล้วค่าที่ได้ยังเหมือนเดิม แสดงว่าไม่ได้ส่งคำว่า Bearer มาด้วย
+		if idToken == authHeader || idToken == "" {
 			http.Error(w, "Invalid Token format", http.StatusUnauthorized)
 			return
 		}
-		idToken := splitToken[1]
 
-		// ตรวจสอบ Token กับ Firebase
+		// 🌟 2. เรียกใช้งาน Auth Client ของ Firebase
 		client, err := app.Auth(context.Background())
 		if err != nil {
 			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
 			return
 		}
 
+		// 🌟 3. ส่ง Token ไปให้ Firebase ตรวจสอบ
 		token, err := client.VerifyIDToken(context.Background(), idToken)
 		if err != nil {
+			// พิมพ์ Error ออกทาง Log ของ Cloud Run เพื่อให้เราตามไปดูได้ว่าผิดที่อะไร
+			log.Printf("Token verification failed: %v", err)
 			http.Error(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
