@@ -159,6 +159,8 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 		// สร้าง Token ใหม่โดยใช้ UID ของ LINE เป็นตัวอ้างอิง
 		customToken, err := client.CustomToken(context.Background(), lineRes.Sub)
 		if err != nil {
+			// 🌟 เพิ่มบรรทัดนี้ เพื่อให้ระบบพิมพ์สาเหตุที่แท้จริงลงใน Log
+			log.Printf("🔥 Failed to create custom token: %v", err)
 			http.Error(w, "Error creating custom token", http.StatusInternalServerError)
 			return
 		}
