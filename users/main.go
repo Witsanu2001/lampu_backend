@@ -42,6 +42,7 @@ func initFirestore() *firestore.Client {
 
 func main() {
 	// 🌟 ถอยออกไป 1 โฟลเดอร์เพื่อหาไฟล์ .env ศูนย์กลาง
+	// 🌟 ถอยออกไป 1 โฟลเดอร์เพื่อหาไฟล์ .env ศูนย์กลาง
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("No ../.env file found. Using system environment variables.")
 	}
