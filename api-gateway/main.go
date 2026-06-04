@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -55,8 +56,6 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// authMiddleware เป็นฟังก์ชันสกัดกั้นเพื่อตรวจสอบ Token ก่อนเข้าถึง API
-// authMiddleware เป็นฟังก์ชันสกัดกั้นเพื่อตรวจสอบ Token ก่อนเข้าถึง API
 func authMiddleware(app *firebase.App, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -116,6 +115,62 @@ func createProxy(targetURL string) *httputil.ReverseProxy {
 	return proxy
 }
 
+func lineLoginHandler(app *firebase.App) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// 1. รับ ID Token ของ LINE จากหน้าบ้าน
+		var reqBody struct {
+			IDToken string `json:"id_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// 2. ส่งไปถามเซิร์ฟเวอร์ LINE ว่าบัตรนี้ของจริงไหม
+		resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
+			"id_token":  {reqBody.IDToken},
+			"client_id": {"2010209102"}, // 🌟 Channel ID ของ LIFF คุณ
+		})
+		if err != nil {
+			http.Error(w, "Failed to verify with LINE", http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		var lineRes struct {
+			Sub   string `json:"sub"` // UID ของ LINE
+			Error string `json:"error"`
+		}
+		json.NewDecoder(resp.Body).Decode(&lineRes)
+
+		// ถ้า LINE บอกว่าบัตรปลอม หรือหมดอายุ
+		if lineRes.Error != "" || lineRes.Sub == "" {
+			http.Error(w, "Invalid LINE Token", http.StatusUnauthorized)
+			return
+		}
+
+		// 3. ถ้าของจริง! ให้ Firebase Admin เสกบัตรเข้างานใบใหม่ (Custom Token)
+		client, err := app.Auth(context.Background())
+		if err != nil {
+			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
+			return
+		}
+
+		// สร้าง Token ใหม่โดยใช้ UID ของ LINE เป็นตัวอ้างอิง
+		customToken, err := client.CustomToken(context.Background(), lineRes.Sub)
+		if err != nil {
+			http.Error(w, "Error creating custom token", http.StatusInternalServerError)
+			return
+		}
+
+		// 4. ส่งบัตร Firebase กลับไปให้ React
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"firebase_token": customToken,
+		})
+	}
+}
+
 func main() {
 	// 🌟 ถอยออกไป 1 โฟลเดอร์เพื่อหาไฟล์ .env (../.env)
 	if err := godotenv.Load("../.env"); err != nil {
@@ -131,6 +186,8 @@ func main() {
 
 	userProxy := createProxy(userServiceURL)
 	router := http.NewServeMux()
+
+	router.HandleFunc("/api/auth/line", corsMiddleware(lineLoginHandler(app)))
 
 	router.HandleFunc("/api/secure-data", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Hello, API Gateway is working!")
