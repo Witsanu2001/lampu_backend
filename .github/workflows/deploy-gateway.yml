@@ -1,0 +1,28 @@
+name: Deploy API Gateway
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api-gateway/**' # ทำงานเมื่อโฟลเดอร์ api-gateway มีการเปลี่ยนแปลง
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: api-gateway
+          region: asia-southeast1
+          source: ./api-gateway
+          flags: '--allow-unauthenticated --set-env-vars=USER_SERVICE_URL=https://user-service-XXXXX.asia-southeast1.run.app'
