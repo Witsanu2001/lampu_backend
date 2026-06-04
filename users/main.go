@@ -14,6 +14,8 @@ import (
 	"google.golang.org/api/option"
 )
 
+// Test CI/CD trigger
+
 func initFirestore() *firestore.Client {
 	ctx := context.Background()
 	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
