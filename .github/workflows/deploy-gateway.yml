@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'api-gateway/**' # ทำงานเมื่อโฟลเดอร์ api-gateway มีการเปลี่ยนแปลง
+      - 'api-gateway/**' # ทำงานเมื่อโฟลเดอร์ api-gateway มีการเปลี่ยนแปลง # ทำงานเมื่อโฟลเดอร์ api-gateway มีการเปลี่ยนแปลง
 
 jobs:
   deploy:
