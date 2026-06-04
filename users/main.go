@@ -1,0 +1,67 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"users/handlers"
+	"users/repository"
+
+	"cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go/v4"
+	"github.com/joho/godotenv"
+	"google.golang.org/api/option"
+)
+
+func initFirestore() *firestore.Client {
+	ctx := context.Background()
+	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	var app *firebase.App
+	var err error
+
+	if credentialsFile != "" {
+		opt := option.WithCredentialsFile(credentialsFile)
+		app, err = firebase.NewApp(ctx, nil, opt)
+	} else {
+		app, err = firebase.NewApp(ctx, nil)
+	}
+	if err != nil {
+		log.Fatalf("error initializing app: %v", err)
+	}
+
+	client, err := app.Firestore(ctx)
+	if err != nil {
+		log.Fatalf("error initializing firestore: %v", err)
+	}
+	log.Println("Firestore connected successfully")
+	return client
+}
+
+func main() {
+	// 🌟 ถอยออกไป 1 โฟลเดอร์เพื่อหาไฟล์ .env ศูนย์กลาง
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("No ../.env file found. Using system environment variables.")
+	}
+
+	firestoreClient := initFirestore()
+	defer firestoreClient.Close()
+
+	userRepo := repository.NewUserRepository(firestoreClient)
+	userHandler := handlers.NewUserHandler(userRepo)
+
+	http.HandleFunc("/api/users/sync", userHandler.SyncUserHandler)
+	http.HandleFunc("/api/users/all", userHandler.GetAllUsersHandler)
+
+	// 🌟 ระบบจัดการพอร์ต: ถ้ามี PORT จาก Cloud Run ให้ใช้ก่อน ถ้าไม่มีให้ใช้ USER_PORT จาก .env
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = os.Getenv("USER_PORT")
+		if port == "" {
+			port = "8081"
+		}
+	}
+
+	log.Printf("User Service is running on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
