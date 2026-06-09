@@ -3,7 +3,7 @@ name: Deploy User Service
 on:
   push:
     branches:
-      - main
+      - main # <--- ระบบจะ deploy เมื่อ push เข้า branch นี้
     paths:
       - 'users/**' # ทำงานเมื่อโฟลเดอร์ users มีการเปลี่ยนแปลง
 
