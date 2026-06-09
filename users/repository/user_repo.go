@@ -50,3 +50,15 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]models.UserProfile, erro
 
 	return users, nil
 }
+
+func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserProfile, error) {
+	doc, err := r.client.Collection("users").Doc(uid).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var user models.UserProfile
+	if err := doc.DataTo(&user); err != nil {
+		return nil, err
+	}
+	return &user, nil
+}

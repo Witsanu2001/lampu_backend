@@ -53,6 +53,16 @@ func (h *UserHandler) SyncUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 🎯 1. ตรวจสอบผู้ใช้เดิมใน Firestore ก่อนเซฟเพื่อรักษาค่า role
+	existingUser, err := h.repo.GetByID(r.Context(), user.UID)
+	if err == nil && existingUser != nil && existingUser.Role != "" {
+		// ถ้ามีผู้ใช้อยู่แล้ว ให้ใช้ role เดิมจากฐานข้อมูล (เช่น admin หรือ user)
+		user.Role = existingUser.Role
+	} else {
+		// ถ้าเป็นผู้ใช้ใหม่เอี่ยมที่ยังไม่มีในระบบ ให้ตั้งค่าเริ่มต้นเป็น "user"
+		user.Role = "user"
+	}
+
 	user.LastLogin = time.Now()
 
 	if err := h.repo.Save(r.Context(), user); err != nil {
@@ -61,7 +71,7 @@ func (h *UserHandler) SyncUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 🌟 ส่งกลับเป็น Object ปกติ (data: { ... })
+	// 🌟 ส่งข้อมูล user ที่มีค่า role ถูกต้องกลับไปให้ Frontend
 	sendJSONResponse(w, http.StatusOK, true, "User synced successfully", user)
 }
 

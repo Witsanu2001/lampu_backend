@@ -9,4 +9,5 @@ type UserProfile struct {
 	PhotoURL    string    `json:"photoURL"`
 	Provider    string    `json:"provider"`
 	LastLogin   time.Time `json:"lastLogin"`
+	Role        string    `json:"role"`
 }
