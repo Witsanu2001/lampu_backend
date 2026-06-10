@@ -188,9 +188,9 @@ func main() {
 		log.Fatal("Error: USER_SERVICE_URL is not set!")
 	}
 
-	orderServiceURL := os.Getenv("ORDER_SERVICE_URL")
+	orderServiceURL := os.Getenv("ORDERS_SERVICE_URL")
 	if orderServiceURL == "" {
-		log.Fatal("Error: ORDER_SERVICE_URL is not set!")
+		log.Fatal("Error: ORDERS_SERVICE_URL is not set!")
 	}
 
 	userProxy := createProxy(userServiceURL)
