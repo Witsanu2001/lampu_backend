@@ -1,0 +1,39 @@
+name: Deploy Microservices
+
+on:
+  push:
+    branches:
+      - main # (หรือเปลี่ยนเป็น deploy ถ้าคุณต้องการใช้ branch อื่น)
+    paths:
+      - 'users/**'  # ทำงานเมื่อมีการแก้ไฟล์ใน users
+      - 'orders/**' # ทำงานเมื่อมีการแก้ไฟล์ใน orders
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # 🚀 สเตป Deploy User Service
+      - name: Deploy User Service
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: user-service
+          region: asia-southeast1
+          source: ./users
+          flags: '--allow-unauthenticated'
+
+      # 🚀 สเตป Deploy Order Service
+      - name: Deploy Order Service
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: order-service
+          region: asia-southeast1
+          source: ./orders
+          flags: '--allow-unauthenticated'

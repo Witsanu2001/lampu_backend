@@ -124,7 +124,13 @@ func main() {
 		log.Fatal("Error: USER_SERVICE_URL is not set!")
 	}
 
+	orderServiceURL := os.Getenv("ORDER_SERVICE_URL")
+	if orderServiceURL == "" {
+		log.Fatal("Error: ORDER_SERVICE_URL is not set!")
+	}
+
 	userProxy := createProxy(userServiceURL)
+	orderProxy := createProxy(orderServiceURL)
 	router := http.NewServeMux()
 
 	router.HandleFunc("/api/secure-data", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +140,11 @@ func main() {
 	router.HandleFunc("/api/users/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Forwarding request to User Service: %s", r.URL.Path)
 		userProxy.ServeHTTP(w, r)
+	}))
+
+	router.HandleFunc("/api/orders/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Forwarding request to Order Service: %s", r.URL.Path)
+		orderProxy.ServeHTTP(w, r)
 	}))
 
 	// 🌟 ระบบจัดการพอร์ต: ถ้ามี PORT จาก Cloud Run ให้ใช้ก่อน ถ้าไม่มีให้ใช้ GATEWAY_PORT จาก .env
