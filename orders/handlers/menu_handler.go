@@ -32,9 +32,9 @@ func NewMenuHandler(repo *repository.MenuRepository, bucket *storage.BucketHandl
 }
 
 func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
-	name_menu := c.FormValue("name")
-	description_menu := c.FormValue("description")
-	priceStr := c.FormValue("price")
+	name_menu := c.FormValue("name_menu")
+	description_menu := c.FormValue("description_menu")
+	priceStr := c.FormValue("price_menu")
 	type_menu := c.FormValue("type_menu")
 	availableStr := c.FormValue("available")
 	available := true
