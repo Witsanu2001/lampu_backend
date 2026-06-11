@@ -39,10 +39,7 @@ func initFirebase() *firebase.App {
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		// ✨ แก้ไขบรรทัดนี้: เติม PUT, DELETE เข้าไปด้วยครับ!
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 
 		if r.Method == "OPTIONS" {
