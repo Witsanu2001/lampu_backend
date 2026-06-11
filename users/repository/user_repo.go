@@ -67,7 +67,7 @@ func (r *UserRepository) GetRiders(ctx context.Context) ([]models.UserProfile, e
 	var riders []models.UserProfile
 
 	// ✨ แก้ไขจาก r.Client เป็น r.client (ตัวเล็ก) เพื่อให้ตรงกับ Struct ที่ประกาศไว้
-	iter := r.client.Collection("users").Where("role", "==", "rider").Documents(ctx)
+	iter := r.client.Collection("users").Where("Role", "==", "rider").Documents(ctx)
 	defer iter.Stop() // ✨ อย่าลืมเติม defer iter.Stop() เพื่อคืน resource ของหน่วยความจำด้วยครับ
 
 	for {
