@@ -24,6 +24,11 @@ type OrderHandler struct {
 	BucketName    string
 }
 
+type UpdateStatusRequest struct {
+	UserID string `json:"user_id" form:"user_id"`
+	Status string `json:"status" form:"status"`
+}
+
 func NewOrderHandler(repo *repository.OrderRepository, bucket *storage.BucketHandle, bucketName string) *OrderHandler {
 	return &OrderHandler{Repo: repo, StorageBucket: bucket, BucketName: bucketName}
 }
@@ -243,5 +248,73 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 		Success: true,
 		Message: "ดึงรายละเอียดออเดอร์สำเร็จ",
 		Data:    order,
+	})
+}
+
+func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. ดึง order_id จาก URL Parameter
+	orderID := c.Params("id")
+	if orderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order ID is required",
+		})
+	}
+
+	// 2. ดึงค่า user_id และ status จาก Request Body
+	var req UpdateStatusRequest
+
+	// ใช้ BodyParser เพื่อรองรับการส่งมาแบบ JSON
+	if err := c.BodyParser(&req); err != nil {
+		// ถ้าส่งมาแบบ Form-Data จะ fallback มาดึงแบบนี้แทน
+		req.UserID = c.FormValue("user_id")
+		req.Status = c.FormValue("status")
+	}
+
+	// 3. ตรวจสอบความถูกต้องของข้อมูล
+	if req.Status == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Status is required",
+		})
+	}
+	if req.UserID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(utils.APIResponse{
+			Success: false,
+			Message: "User ID is required",
+		})
+	}
+
+	// 4. ส่งให้ Repository จัดการอัปเดต
+	err := h.Repo.UpdateOrderStatus(ctx, orderID, req.Status, req.UserID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to update order status",
+		})
+	}
+
+	// 5. สร้างข้อความตอบกลับแบบปรับเปลี่ยนตามสถานะ (Dynamic Message)
+	var responseMsg string
+	switch req.Status {
+	case "preparing":
+		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
+	case "refuse":
+		responseMsg = "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
+	case "ready":
+		responseMsg = "อาหารพร้อมส่งแล้ว 🛵"
+	case "shipping":
+		responseMsg = "กำลังนำส่งอาหารให้ลูกค้า 🚀"
+	case "delivered":
+		responseMsg = "จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย 🎉"
+	default:
+		responseMsg = "อัปเดตสถานะสำเร็จ"
+	}
+
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: responseMsg,
 	})
 }

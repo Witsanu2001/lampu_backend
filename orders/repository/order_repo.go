@@ -90,3 +90,25 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*mo
 
 	return &order, nil
 }
+
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) error {
+
+	// ใช้ .Doc().Update() เพื่อเจาะจงอัปเดตเฉพาะฟิลด์ที่ต้องการ
+	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, []firestore.Update{
+		{
+			Path:  "status",
+			Value: status,
+		},
+		{
+			Path:  "updated_at", // 🚨 ตรวจสอบว่าใน Database ของคุณใช้ key นี้ตัวเล็กหรือตัวใหญ่ (เช่น UpdatedAt)
+			Value: time.Now(),
+		},
+		// (ทางเลือก) ถ้าต้องการเก็บประวัติว่าใครเป็นคนกดยืนยันออเดอร์นี้
+		{
+			Path:  "updated_by",
+			Value: userID,
+		},
+	})
+
+	return err
+}

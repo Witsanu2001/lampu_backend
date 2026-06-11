@@ -64,16 +64,17 @@ func main() {
 	app := fiber.New()
 	app.Use(logger.New())
 
+	ordersApi := app.Group("/api/orders")
+
 	// ---- Menus (ส่วนที่เพิ่มเข้ามาใหม่) ----
 	menuRepo := repository.NewMenuRepository(firestoreClient)
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket)
 
-	menuApi := app.Group("/api/orders")
-	menuApi.Post("/menus_add", menuHandler.CreateMenu)
-	menuApi.Get("/menus_get", menuHandler.GetAllMenus)
-	menuApi.Get("/menus_type/:type_menu", menuHandler.GetMenusByType)
-	menuApi.Put("/menus_edit/:id", menuHandler.UpdateMenu)
-	menuApi.Delete("/menus_delete/:id", menuHandler.DeleteMenu)
+	ordersApi.Post("/menus_add", menuHandler.CreateMenu)
+	ordersApi.Get("/menus_get", menuHandler.GetAllMenus)
+	ordersApi.Get("/menus_type/:type_menu", menuHandler.GetMenusByType)
+	ordersApi.Put("/menus_edit/:id", menuHandler.UpdateMenu)
+	ordersApi.Delete("/menus_delete/:id", menuHandler.DeleteMenu)
 
 	orderRepo := repository.NewOrderRepository(firestoreClient)
 	bucketName := os.Getenv("FIREBASE_STORAGE_BUCKET")
@@ -82,13 +83,12 @@ func main() {
 	}
 	orderHandler := handlers.NewOrderHandler(orderRepo, bucket, bucketName)
 
-	menuApi.Post("/orders_add", orderHandler.CreateOrder)
-	menuApi.Get("/orders_get", orderHandler.GetAllOrders)
-	menuApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
-	menuApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
-	// menuApi.Get("/orders_type/:type_order", orderHandler.GetOrdersByType)
-	// menuApi.Put("/orders_edit/:id", orderHandler.UpdateOrder)
-	// menuApi.Delete("/orders_delete/:id", orderHandler.DeleteOrder)
+	ordersApi.Post("/orders_add", orderHandler.CreateOrder)
+	ordersApi.Get("/orders_get", orderHandler.GetAllOrders)
+	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
+	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
+
+	ordersApi.Put("/orders_put/:id/status", orderHandler.UpdateOrderStatus)
 
 	port := os.Getenv("PORT")
 	if port == "" {
