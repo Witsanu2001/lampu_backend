@@ -167,6 +167,7 @@ func (h *MenuHandler) GetMenusByType(c *fiber.Ctx) error {
 	})
 }
 
+// 🛠️ ฟังก์ชันสำหรับการแก้ไขข้อมูลเมนูอาหาร
 func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
@@ -176,25 +177,27 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 		})
 	}
 
+	// 1. รับค่าให้ตรงกับชื่อที่หน้าบ้านส่งมา (FormData)
 	name_menu := c.FormValue("name_menu")
-	description_menu := c.FormValue("description_menu")
+	description_menu := c.FormValue("description_menu") // ✨ หน้าบ้านส่งคำนี้มา
 	priceStr := c.FormValue("price_menu")
 	type_menu := c.FormValue("type_menu")
 	availableStr := c.FormValue("available")
 
-	// เตรียมรายการฟิลด์ที่จะส่งไปอัปเดตใน Firestore
 	var updates []firestore.Update
 
+	// 2. จับคู่ Path ให้ตรงกับชื่อฟิลด์ใน Firestore เป๊ะๆ (ต้องมี _menu)
 	if name_menu != "" {
-		updates = append(updates, firestore.Update{Path: "name", Value: name_menu})
+		updates = append(updates, firestore.Update{Path: "name_menu", Value: name_menu})
 	}
-	if description_menu != "" {
-		updates = append(updates, firestore.Update{Path: "description", Value: description_menu})
-	}
+
+	// รายละเอียด บันทึกได้แม้จะถูกลบจนเป็นค่าว่าง
+	updates = append(updates, firestore.Update{Path: "description_menu", Value: description_menu})
+
 	if priceStr != "" {
-		price_menu, err := strconv.ParseFloat(priceStr, 64)
+		price, err := strconv.ParseFloat(priceStr, 64)
 		if err == nil {
-			updates = append(updates, firestore.Update{Path: "price", Value: price_menu})
+			updates = append(updates, firestore.Update{Path: "price_menu", Value: price})
 		}
 	}
 	if type_menu != "" {
@@ -208,9 +211,9 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 		updates = append(updates, firestore.Update{Path: "available", Value: available})
 	}
 
-	// 📸 เช็คว่าหน้าบ้านมีการอัปโหลดไฟล์รูปภาพใหม่มาด้วยหรือไม่
+	// 3. จัดการรูปภาพ (ถ้ารูปไม่ได้เปลี่ยน โค้ดส่วนนี้จะไม่ทำงาน ทำให้รูปเดิมไม่หาย)
 	fileHeader, err := c.FormFile("image")
-	if err == nil { // ถ้าไม่มี error แปลว่ามีไฟล์รูปใหม่ส่งมา
+	if err == nil {
 		file, err := fileHeader.Open()
 		if err == nil {
 			defer file.Close()
@@ -225,8 +228,10 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 			if _, err := io.Copy(writer, file); err == nil {
 				writer.Close()
 				bucketName := "lampu-5a178.firebasestorage.app"
-				imageURL_Menu := fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/menus%%2F%s?alt=media", bucketName, filename)
-				updates = append(updates, firestore.Update{Path: "image_url", Value: imageURL_Menu})
+				imageURL := fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/menus%%2F%s?alt=media", bucketName, filename)
+
+				// ✨ อัปเดต Path รูปภาพให้ตรงกับ Firestore
+				updates = append(updates, firestore.Update{Path: "image_url_menu", Value: imageURL})
 			}
 		}
 	}
@@ -238,7 +243,7 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 		})
 	}
 
-	// ส่งรายการไปอัปเดตที่ Repo
+	// ส่งไปอัปเดต
 	if err := h.Repo.UpdateMenu(c.Context(), id, updates); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
 			Success: false,
