@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -28,9 +29,17 @@ func NewOrderHandler(repo *repository.OrderRepository, bucket *storage.BucketHan
 func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	ctx := context.Background()
 
+	// Get order JSON string from form field
+	orderJSON := c.FormValue("order")
+	if orderJSON == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Order data is required",
+		})
+	}
+
 	// Parse order JSON
 	var order models.Order
-	if err := c.BodyParser(&order); err != nil {
+	if err := json.Unmarshal([]byte(orderJSON), &order); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Failed to parse order data",
 		})
