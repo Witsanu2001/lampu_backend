@@ -93,3 +93,17 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 		"data":    menu,
 	})
 }
+
+func (h *MenuHandler) GetAllMenus(c *fiber.Ctx) error {
+	menus, err := h.Repo.GetAllMenus(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch menus",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Menus fetched successfully",
+		"data":    menus,
+	})
+}

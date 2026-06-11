@@ -70,6 +70,7 @@ func main() {
 
 	menuApi := app.Group("/api/orders")
 	menuApi.Post("/menus", menuHandler.CreateMenu)
+	menuApi.Get("/menus", menuHandler.GetAllMenus)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -26,3 +26,20 @@ func (r *MenuRepository) CreateMenu(ctx context.Context, menu *models.Menu) erro
 	_, err := ref.Set(ctx, menu)
 	return err
 }
+
+func (r *MenuRepository) GetAllMenus(ctx context.Context) ([]models.Menu, error) {
+	var menus []models.Menu
+	iter := r.Client.Collection("menus").Documents(ctx)
+
+	for {
+		doc, err := iter.Next()
+		if err != nil {
+			break
+		}
+		var menu models.Menu
+		doc.DataTo(&menu)
+		menu.ID = doc.Ref.ID
+		menus = append(menus, menu)
+	}
+	return menus, nil
+}
