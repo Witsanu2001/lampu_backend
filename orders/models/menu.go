@@ -7,7 +7,7 @@ type Menu struct {
 	Name        string    `json:"name" firestore:"name"`
 	Description string    `json:"description" firestore:"description"`
 	Price       float64   `json:"price" firestore:"price"`
-	Category    string    `json:"category" firestore:"category"`   // ✨ เพิ่มเข้ามา
+	TypeMenu    string    `json:"type_menu" firestore:"type_menu"` // ✨ เพิ่มเข้ามา
 	Available   bool      `json:"available" firestore:"available"` // ✨ เพิ่มเข้ามา
 	ImageURL    string    `json:"image_url" firestore:"image_url"`
 	CreatedAt   time.Time `json:"created_at" firestore:"created_at"`
