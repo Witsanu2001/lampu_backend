@@ -9,18 +9,13 @@ import (
 	"strconv"
 	"time"
 
+	"orders/utils"
+
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
-
-// 📌 กำหนดโครงสร้าง Response มาตรฐานที่คุณต้องการ
-type APIResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
 
 type MenuHandler struct {
 	Repo          *repository.MenuRepository
@@ -44,7 +39,7 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 	}
 
 	if name_menu == "" || priceStr == "" || type_menu == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Name, price, and type_menu are required",
 		})
@@ -52,7 +47,7 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 
 	price_menu, err := strconv.ParseFloat(priceStr, 64)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Invalid price format",
 		})
@@ -60,7 +55,7 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 
 	fileHeader, err := c.FormFile("image")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Image is required",
 		})
@@ -68,7 +63,7 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 
 	file, err := fileHeader.Open()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to open image",
 		})
@@ -85,13 +80,13 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 	writer.ObjectAttrs.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
 
 	if _, err := io.Copy(writer, file); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to upload image",
 		})
 	}
 	if err := writer.Close(); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to finalize image upload",
 		})
@@ -110,14 +105,14 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 	}
 
 	if err := h.Repo.CreateMenu(c.Context(), &menu); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to save menu data",
 		})
 	}
 
 	// 📌 คืนค่าเมื่อสำเร็จ
-	return c.Status(fiber.StatusCreated).JSON(APIResponse{
+	return c.Status(fiber.StatusCreated).JSON(utils.APIResponse{
 		Success: true,
 		Message: "Menu created successfully",
 		Data:    menu,
@@ -127,14 +122,14 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 func (h *MenuHandler) GetAllMenus(c *fiber.Ctx) error {
 	menus, err := h.Repo.GetAllMenus(c.Context())
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to fetch menus",
 		})
 	}
 
 	// 📌 คืนค่าเมื่อสำเร็จ
-	return c.Status(fiber.StatusOK).JSON(APIResponse{
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "Menus fetched successfully",
 		Data:    menus,
@@ -146,7 +141,7 @@ func (h *MenuHandler) GetMenusByType(c *fiber.Ctx) error {
 	typeMenu := c.Params("type_menu")
 
 	if typeMenu == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "type_menu parameter is required",
 		})
@@ -154,13 +149,13 @@ func (h *MenuHandler) GetMenusByType(c *fiber.Ctx) error {
 
 	menus, err := h.Repo.GetMenusByType(c.Context(), typeMenu)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to fetch menus by type",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(APIResponse{
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "Menus fetched successfully for type: " + typeMenu,
 		Data:    menus,
@@ -171,7 +166,7 @@ func (h *MenuHandler) GetMenusByType(c *fiber.Ctx) error {
 func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Menu ID is required",
 		})
@@ -237,7 +232,7 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 	}
 
 	if len(updates) == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "No fields to update",
 		})
@@ -245,13 +240,13 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 
 	// ส่งไปอัปเดต
 	if err := h.Repo.UpdateMenu(c.Context(), id, updates); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to update menu",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(APIResponse{
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "Menu updated successfully",
 	})
@@ -260,20 +255,20 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 func (h *MenuHandler) DeleteMenu(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(APIResponse{
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Menu ID is required",
 		})
 	}
 
 	if err := h.Repo.DeleteMenu(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(APIResponse{
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to delete menu",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(APIResponse{
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "Menu deleted successfully",
 	})

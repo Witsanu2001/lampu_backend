@@ -66,7 +66,7 @@ func main() {
 
 	// ---- Menus (ส่วนที่เพิ่มเข้ามาใหม่) ----
 	menuRepo := repository.NewMenuRepository(firestoreClient)
-	menuHandler := handlers.NewMenuHandler(menuRepo, bucket) // ส่ง bucket เข้าไปด้วย
+	menuHandler := handlers.NewMenuHandler(menuRepo, bucket)
 
 	menuApi := app.Group("/api/orders")
 	menuApi.Post("/menus_add", menuHandler.CreateMenu)
@@ -74,6 +74,19 @@ func main() {
 	menuApi.Get("/menus_type/:type_menu", menuHandler.GetMenusByType)
 	menuApi.Put("/menus_edit/:id", menuHandler.UpdateMenu)
 	menuApi.Delete("/menus_delete/:id", menuHandler.DeleteMenu)
+
+	orderRepo := repository.NewOrderRepository(firestoreClient)
+	bucketName := os.Getenv("FIREBASE_STORAGE_BUCKET")
+	if bucketName == "" {
+		bucketName = "lampu-5a178.firebasestorage.app"
+	}
+	orderHandler := handlers.NewOrderHandler(orderRepo, bucket, bucketName)
+
+	menuApi.Post("/orders_add", orderHandler.CreateOrder)
+	menuApi.Get("/orders_get", orderHandler.GetAllOrders)
+	// menuApi.Get("/orders_type/:type_order", orderHandler.GetOrdersByType)
+	// menuApi.Put("/orders_edit/:id", orderHandler.UpdateOrder)
+	// menuApi.Delete("/orders_delete/:id", orderHandler.DeleteOrder)
 
 	port := os.Getenv("PORT")
 	if port == "" {
