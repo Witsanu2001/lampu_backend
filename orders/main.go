@@ -15,19 +15,22 @@ import (
 
 func initFirebase() *firebase.App {
 	ctx := context.Background()
-	// เช็คว่ามีตัวแปรชี้ไปหาไฟล์คีย์ไหม (จะมีตอนรันในเครื่องเรา)
 	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+	// สำคัญ: ต้องระบุชื่อ Bucket ของ Firebase Storage
+	config := &firebase.Config{
+		StorageBucket: "lampu-5a178.firebasestorage.app", // เปลี่ยนเป็นชื่อ Bucket ของคุณ
+	}
+
 	var app *firebase.App
 	var err error
 
 	if credentialsFile != "" {
-		// รันบน Local: ใช้ไฟล์ JSON
 		opt := option.WithCredentialsFile(credentialsFile)
-		app, err = firebase.NewApp(ctx, nil, opt)
+		app, err = firebase.NewApp(ctx, config, opt) // ใส่ config เข้าไป
 		log.Println("Initialized Firebase with local Service Account Key")
 	} else {
-		// รันบน Cloud Run: ใช้สิทธิ์ของระบบอัตโนมัติ ไม่ต้องพึ่งไฟล์
-		app, err = firebase.NewApp(ctx, nil)
+		app, err = firebase.NewApp(ctx, config) // ใส่ config เข้าไป
 		log.Println("Initialized Firebase with Cloud Run default credentials")
 	}
 
@@ -38,34 +41,40 @@ func initFirebase() *firebase.App {
 }
 
 func main() {
-	// 1. เชื่อมต่อ Firebase
 	appFirebase := initFirebase()
 	ctx := context.Background()
 
-	client, err := appFirebase.Firestore(ctx)
+	// Firestore Client
+	firestoreClient, err := appFirebase.Firestore(ctx)
 	if err != nil {
 		log.Fatalf("error initializing firestore: %v\n", err)
 	}
-	defer client.Close()
+	defer firestoreClient.Close()
 
-	// 2. Setup Fiber
+	// Storage Client (เพิ่มเข้ามาใหม่)
+	storageClient, err := appFirebase.Storage(ctx)
+	if err != nil {
+		log.Fatalf("error initializing storage: %v\n", err)
+	}
+	bucket, err := storageClient.DefaultBucket()
+	if err != nil {
+		log.Fatalf("error getting default bucket: %v\n", err)
+	}
+
 	app := fiber.New()
 	app.Use(logger.New())
 
-	// 3. Inject Dependencies
-	orderRepo := repository.NewOrderRepository(client)
-	orderHandler := handlers.NewOrderHandler(orderRepo)
+	// ---- Menus (ส่วนที่เพิ่มเข้ามาใหม่) ----
+	menuRepo := repository.NewMenuRepository(firestoreClient)
+	menuHandler := handlers.NewMenuHandler(menuRepo, bucket) // ส่ง bucket เข้าไปด้วย
 
-	// 4. Routes
-	api := app.Group("/orders")
-	api.Post("/", orderHandler.CreateOrder)
-	api.Get("/user/:userId", orderHandler.GetMyOrders)
+	menuApi := app.Group("/menus")
+	menuApi.Post("/", menuHandler.CreateMenu) // API สำหรับสร้างเมนูและอัปโหลดรูป
 
-	// 5. Start Server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8082"
 	}
-	log.Printf("Orders Service is running on port %s", port)
+	log.Printf("Service is running on port %s", port)
 	app.Listen(":" + port)
 }

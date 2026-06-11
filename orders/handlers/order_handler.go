@@ -1,48 +1,86 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"orders/models"
 	"orders/repository"
+	"strconv"
+	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
-type OrderHandler struct {
-	Repo *repository.OrderRepository
+type MenuHandler struct {
+	Repo          *repository.MenuRepository
+	StorageBucket *storage.BucketHandle
 }
 
-func NewOrderHandler(repo *repository.OrderRepository) *OrderHandler {
-	return &OrderHandler{Repo: repo}
+// ฟังก์ชันนี้แหละที่ main.go มองหาอยู่!
+func NewMenuHandler(repo *repository.MenuRepository, bucket *storage.BucketHandle) *MenuHandler {
+	return &MenuHandler{Repo: repo, StorageBucket: bucket}
 }
 
-func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
-	var order models.Order
-	if err := c.BodyParser(&order); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
+	name := c.FormValue("name")
+	description := c.FormValue("description")
+	priceStr := c.FormValue("price")
+
+	if name == "" || priceStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Name and price are required"})
 	}
 
-	// TODO: ดึง UserID จาก Middleware (Token) มาใส่
-	// order.UserID = c.Locals("user_id").(string)
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid price format"})
+	}
 
-	if err := h.Repo.CreateOrder(c.Context(), &order); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create order"})
+	fileHeader, err := c.FormFile("image")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Image is required"})
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to open image"})
+	}
+	defer file.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	filename := uuid.New().String() + "-" + fileHeader.Filename
+	obj := h.StorageBucket.Object("menus/" + filename)
+	writer := obj.NewWriter(ctx)
+
+	writer.ObjectAttrs.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
+
+	if _, err := io.Copy(writer, file); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to upload image"})
+	}
+	if err := writer.Close(); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to finalize image upload"})
+	}
+
+	bucketName := "lampu-5a178.firebasestorage.app"
+	imageURL := fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/menus%%2F%s?alt=media", bucketName, filename)
+
+	menu := models.Menu{
+		Name:        name,
+		Description: description,
+		Price:       price,
+		ImageURL:    imageURL,
+	}
+
+	if err := h.Repo.CreateMenu(c.Context(), &menu); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save menu data"})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Order created successfully",
-		"data":    order,
-	})
-}
-
-func (h *OrderHandler) GetMyOrders(c *fiber.Ctx) error {
-	userID := c.Params("userId") // ชั่วคราว: รับจาก URL ไปก่อน (ควรรับจาก Token ในอนาคต)
-
-	orders, err := h.Repo.GetOrdersByUserID(c.Context(), userID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch orders"})
-	}
-
-	return c.JSON(fiber.Map{
-		"data": orders,
+		"message": "Menu created successfully",
+		"data":    menu,
 	})
 }
