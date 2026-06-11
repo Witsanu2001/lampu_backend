@@ -28,9 +28,16 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 	name := c.FormValue("name")
 	description := c.FormValue("description")
 	priceStr := c.FormValue("price")
+	category := c.FormValue("category")
+	availableStr := c.FormValue("available")
+	available := true
 
-	if name == "" || priceStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Name and price are required"})
+	if availableStr == "false" {
+		available = false
+	}
+
+	if name == "" || priceStr == "" || category == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Name, price, and category are required"})
 	}
 
 	price, err := strconv.ParseFloat(priceStr, 64)
@@ -72,6 +79,8 @@ func (h *MenuHandler) CreateMenu(c *fiber.Ctx) error {
 		Name:        name,
 		Description: description,
 		Price:       price,
+		Category:    category,
+		Available:   available,
 		ImageURL:    imageURL,
 	}
 
