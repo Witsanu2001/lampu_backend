@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"orders/utils"
+
 	"cloud.google.com/go/storage"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -26,24 +28,31 @@ func NewOrderHandler(repo *repository.OrderRepository, bucket *storage.BucketHan
 	return &OrderHandler{Repo: repo, StorageBucket: bucket, BucketName: bucketName}
 }
 
+// อย่าลืม import "fmt" และ "time" ไว้ด้านบนของไฟล์ด้วยนะครับ
+
 func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	ctx := context.Background()
 
 	// Get order JSON string from form field
 	orderJSON := c.FormValue("order")
 	if orderJSON == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Order data is required",
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order data is required",
 		})
 	}
 
 	// Parse order JSON
 	var order models.Order
 	if err := json.Unmarshal([]byte(orderJSON), &order); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Failed to parse order data",
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to parse order data",
 		})
 	}
+
+	// ✨ กำหนดสถานะเริ่มต้นของออเดอร์เป็น "new" (ออเดอร์ใหม่)
+	order.Status = "new"
 
 	// ----------------------------------------------------
 	// ✨ เพิ่มการรับค่า user_id จาก Form Data ตรงนี้
@@ -52,31 +61,42 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	if userID != "" {
 		order.UserID = userID
 	} else {
-		// หากต้องการบังคับว่าต้องล็อกอินถึงจะสั่งได้ ให้ดัก Error ตรงนี้
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "User ID is required",
+		return c.Status(fiber.StatusUnauthorized).JSON(utils.APIResponse{
+			Success: false,
+			Message: "User ID is required",
 		})
 	}
 	// ----------------------------------------------------
 
-	// Generate ID if not provided
+	// ✨ สร้าง Order ID อัตโนมัติ (วันเดือนปี-เวลา-มิลลิวินาที 3 หลัก)
 	if order.ID == "" {
-		order.ID = uuid.New().String()
+		now := time.Now()
+
+		// รูปแบบ: YYYYMMDD-HHMMSS (ใน Go ต้องใช้ตัวเลขมหัศจรรย์ 20060102-150405 เสมอ)
+		timeStr := now.Format("20060102-150405")
+
+		// ดึงเศษมิลลิวินาที 3 หลักมาใช้แทนลำดับ (ได้ค่าตั้งแต่ 000 ถึง 999)
+		milliSec := now.UnixMilli() % 1000
+
+		// นำมาต่อกัน จะได้ผลลัพธ์เช่น "ORD-20260611-221840-045"
+		order.ID = fmt.Sprintf("ORD-%s-%03d", timeStr, milliSec)
 	}
 
 	// Handle slip upload if payment method is promptpay and has slip
 	if order.Payment.Method == "promptpay" && order.Payment.HasSlip {
 		slipFile, err := c.FormFile("slip")
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Slip file is required for promptpay payment",
+			return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+				Success: false,
+				Message: "Slip file is required for promptpay payment",
 			})
 		}
 
 		slipURL, err := h.uploadFile(ctx, slipFile, "slips")
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to upload slip",
+			return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+				Success: false,
+				Message: "Failed to upload slip",
 			})
 		}
 		order.SlipURL = slipURL
@@ -87,8 +107,9 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	if err == nil {
 		homeImageURL, err := h.uploadFile(ctx, homeImageFile, "home_images")
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to upload home image",
+			return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+				Success: false,
+				Message: "Failed to upload home image",
 			})
 		}
 		order.HomeImageURL = homeImageURL
@@ -96,12 +117,18 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 
 	// Create order in database
 	if err := h.Repo.CreateOrder(ctx, &order); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create order",
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to create order",
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(order)
+	// ✨ คืนค่าสำเร็จแบบสวยๆ พร้อมแนบข้อมูล Order กลับไปด้วย
+	return c.Status(fiber.StatusCreated).JSON(utils.APIResponse{
+		Success: true,
+		Message: "สร้างออเดอร์สำเร็จ",
+		Data:    order,
+	})
 }
 
 func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
@@ -109,12 +136,18 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 
 	orders, err := h.Repo.GetAllOrders(ctx)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to get orders",
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders",
 		})
 	}
 
-	return c.JSON(orders)
+	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์ทั้งหมดสำเร็จ",
+		Data:    orders,
+	})
 }
 
 func (h *OrderHandler) uploadFile(ctx context.Context, file *multipart.FileHeader, folder string) (string, error) {
@@ -160,20 +193,27 @@ func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 	// ดึงค่า user_id จาก URL Parameter (/:user_id/orderByUser)
 	userID := c.Params("user_id")
 	if userID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "User ID is required",
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "User ID is required",
 		})
 	}
 
-	// เรียกใช้ฟังก์ชันจาก Repo (ที่คุณกำลังจะสร้างในขั้นตอนต่อไป)
+	// เรียกใช้ฟังก์ชันจาก Repo
 	orders, err := h.Repo.GetOrdersByUserID(ctx, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to get orders for this user",
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders for this user",
 		})
 	}
 
-	return c.JSON(orders)
+	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์ของผู้ใช้งานสำเร็จ",
+		Data:    orders,
+	})
 }
 
 func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
@@ -182,8 +222,9 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 	// 1. ดึงค่า id (Document ID) จาก URL Parameter
 	orderID := c.Params("id")
 	if orderID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Order ID is required",
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order ID is required",
 		})
 	}
 
@@ -191,11 +232,16 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 	order, err := h.Repo.GetOrderByID(ctx, orderID)
 	if err != nil {
 		// ดักจับกรณีที่หาออเดอร์ไม่เจอ
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Order not found",
+		return c.Status(fiber.StatusNotFound).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order not found",
 		})
 	}
 
-	// 3. ส่งข้อมูลกลับไปให้หน้าบ้าน (Frontend)
-	return c.JSON(order)
+	// 3. ส่งข้อมูลกลับไปให้หน้าบ้าน (Frontend) พร้อมครอบด้วย APIResponse
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงรายละเอียดออเดอร์สำเร็จ",
+		Data:    order,
+	})
 }
