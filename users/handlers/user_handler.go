@@ -91,3 +91,26 @@ func (h *UserHandler) GetAllUsersHandler(w http.ResponseWriter, r *http.Request)
 	// 🌟 ส่งกลับเป็น Array (data: [ { ... }, { ... } ])
 	sendJSONResponse(w, http.StatusOK, true, "Users retrieved successfully", users)
 }
+
+func (h *UserHandler) GetRiderHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		sendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	// ✨ เรียกใช้ฟังก์ชัน GetRiders จาก Repo ที่เราเพิ่งสร้าง
+	riders, err := h.repo.GetRiders(r.Context())
+	if err != nil {
+		log.Printf("Error fetching riders from Firestore: %v", err)
+		sendJSONResponse(w, http.StatusInternalServerError, false, "Failed to fetch riders", nil)
+		return
+	}
+
+	// ถ้าไม่มีคนขับเลย ให้คืนค่าเป็น Array เปล่า [] แทนที่จะเป็น null
+	if riders == nil {
+		riders = []models.UserProfile{}
+	}
+
+	// ✨ ส่งข้อมูลกลับไปแบบสวยๆ ผ่าน APIResponse
+	sendJSONResponse(w, http.StatusOK, true, "Riders retrieved successfully", riders)
+}

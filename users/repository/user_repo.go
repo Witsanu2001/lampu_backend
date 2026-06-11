@@ -62,3 +62,29 @@ func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserP
 	}
 	return &user, nil
 }
+
+func (r *UserRepository) GetRiders(ctx context.Context) ([]models.UserProfile, error) {
+	var riders []models.UserProfile
+
+	// ✨ แก้ไขจาก r.Client เป็น r.client (ตัวเล็ก) เพื่อให้ตรงกับ Struct ที่ประกาศไว้
+	iter := r.client.Collection("users").Where("role", "==", "rider").Documents(ctx)
+	defer iter.Stop() // ✨ อย่าลืมเติม defer iter.Stop() เพื่อคืน resource ของหน่วยความจำด้วยครับ
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var user models.UserProfile
+		if err := doc.DataTo(&user); err != nil {
+			return nil, err
+		}
+		riders = append(riders, user)
+	}
+
+	return riders, nil
+}

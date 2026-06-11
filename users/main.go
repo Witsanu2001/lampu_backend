@@ -53,8 +53,8 @@ func main() {
 
 	http.HandleFunc("/api/users/sync", userHandler.SyncUserHandler)
 	http.HandleFunc("/api/users/all", userHandler.GetAllUsersHandler)
+	http.HandleFunc("/api/users/get_rider", userHandler.GetRiderHandler)
 
-	// 🌟 ระบบจัดการพอร์ต: ถ้ามี PORT จาก Cloud Run ให้ใช้ก่อน ถ้าไม่มีให้ใช้ USER_PORT จาก .env
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = os.Getenv("USER_PORT")
@@ -64,5 +64,6 @@ func main() {
 	}
 
 	log.Printf("User Service is running on port %s", port)
+	// รันเซิร์ฟเวอร์ด้วยมาตรฐาน Go (จะเรียกใช้ http.HandleFunc ด้านบน)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
