@@ -69,8 +69,11 @@ func main() {
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket) // ส่ง bucket เข้าไปด้วย
 
 	menuApi := app.Group("/api/orders")
-	menuApi.Post("/menus", menuHandler.CreateMenu)
-	menuApi.Get("/menus", menuHandler.GetAllMenus)
+	menuApi.Post("/menus_add", menuHandler.CreateMenu)
+	menuApi.Get("/menus_get", menuHandler.GetAllMenus)
+	menuApi.Get("/menus_type/:type_menu", menuHandler.GetMenusByType)
+	menuApi.Put("/menus_edit/:id", menuHandler.UpdateMenu)
+	menuApi.Delete("/menus_delete/:id", menuHandler.DeleteMenu)
 
 	port := os.Getenv("PORT")
 	if port == "" {
