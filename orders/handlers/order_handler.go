@@ -45,6 +45,20 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		})
 	}
 
+	// ----------------------------------------------------
+	// ✨ เพิ่มการรับค่า user_id จาก Form Data ตรงนี้
+	// ----------------------------------------------------
+	userID := c.FormValue("user_id")
+	if userID != "" {
+		order.UserID = userID
+	} else {
+		// หากต้องการบังคับว่าต้องล็อกอินถึงจะสั่งได้ ให้ดัก Error ตรงนี้
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "User ID is required",
+		})
+	}
+	// ----------------------------------------------------
+
 	// Generate ID if not provided
 	if order.ID == "" {
 		order.ID = uuid.New().String()
@@ -138,4 +152,50 @@ func (h *OrderHandler) uploadFile(ctx context.Context, file *multipart.FileHeade
 	// Return the public URL using Firebase Storage format
 	encodedFilename := strings.ReplaceAll(filename, "/", "%2F")
 	return fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/%s?alt=media", h.BucketName, encodedFilename), nil
+}
+
+func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// ดึงค่า user_id จาก URL Parameter (/:user_id/orderByUser)
+	userID := c.Params("user_id")
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "User ID is required",
+		})
+	}
+
+	// เรียกใช้ฟังก์ชันจาก Repo (ที่คุณกำลังจะสร้างในขั้นตอนต่อไป)
+	orders, err := h.Repo.GetOrdersByUserID(ctx, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to get orders for this user",
+		})
+	}
+
+	return c.JSON(orders)
+}
+
+func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. ดึงค่า id (Document ID) จาก URL Parameter
+	orderID := c.Params("id")
+	if orderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Order ID is required",
+		})
+	}
+
+	// 2. เรียกใช้ Repository เพื่อหาข้อมูลออเดอร์นั้น
+	order, err := h.Repo.GetOrderByID(ctx, orderID)
+	if err != nil {
+		// ดักจับกรณีที่หาออเดอร์ไม่เจอ
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Order not found",
+		})
+	}
+
+	// 3. ส่งข้อมูลกลับไปให้หน้าบ้าน (Frontend)
+	return c.JSON(order)
 }

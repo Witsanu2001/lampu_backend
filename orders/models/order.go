@@ -4,6 +4,7 @@ import "time"
 
 type Order struct {
 	ID           string    `json:"id"`
+	UserID       string    `firestore:"user_id" json:"user_id"`
 	MainItems    []Item    `json:"mainItems"`
 	AddOnItems   []Item    `json:"addOnItems"`
 	Equipment    Equipment `json:"equipment"`

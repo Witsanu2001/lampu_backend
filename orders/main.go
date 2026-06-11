@@ -84,6 +84,8 @@ func main() {
 
 	menuApi.Post("/orders_add", orderHandler.CreateOrder)
 	menuApi.Get("/orders_get", orderHandler.GetAllOrders)
+	menuApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
+	menuApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
 	// menuApi.Get("/orders_type/:type_order", orderHandler.GetOrdersByType)
 	// menuApi.Put("/orders_edit/:id", orderHandler.UpdateOrder)
 	// menuApi.Delete("/orders_delete/:id", orderHandler.DeleteOrder)
