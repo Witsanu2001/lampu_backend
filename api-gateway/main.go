@@ -183,6 +183,12 @@ func main() {
 		userProxy.ServeHTTP(w, r)
 	}))
 
+	router.HandleFunc("/api/orders/menus", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Rewriting and Forwarding to Order Service: %s -> /menus", r.URL.Path)
+		r.URL.Path = "/menus" // สับเปลี่ยน Path ก่อนโยนให้ Proxy
+		orderProxy.ServeHTTP(w, r)
+	}))
+
 	// 🎯 4. เพิ่มเส้นทาง /api/orders/ ให้วิ่งไปหา Order Service
 	router.HandleFunc("/api/orders/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Forwarding request to Order Service: %s", r.URL.Path)

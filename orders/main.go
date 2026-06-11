@@ -68,8 +68,8 @@ func main() {
 	menuRepo := repository.NewMenuRepository(firestoreClient)
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket) // ส่ง bucket เข้าไปด้วย
 
-	menuApi := app.Group("/menus")
-	menuApi.Post("/", menuHandler.CreateMenu) // API สำหรับสร้างเมนูและอัปโหลดรูป
+	menuApi := app.Group("/api/orders/menus")
+	menuApi.Post("/", menuHandler.CreateMenu)
 
 	port := os.Getenv("PORT")
 	if port == "" {
