@@ -63,6 +63,8 @@ func main() {
 
 	// 🌟 4. กำหนด Route ให้ Location (เรียกผ่าน locationHandler)
 	http.HandleFunc("/api/users/location_add", locationHandler.SaveLocationHandler)
+	http.HandleFunc("/api/users/location_update", locationHandler.UpdateLocationHandler)
+	http.HandleFunc("/api/users/location_delete", locationHandler.DeleteLocationHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {

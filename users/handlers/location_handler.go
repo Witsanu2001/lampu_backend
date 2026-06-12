@@ -45,3 +45,55 @@ func (h *LocationHandler) SaveLocationHandler(w http.ResponseWriter, r *http.Req
 
 	utils.SendJSONResponse(w, http.StatusOK, true, "Location saved successfully", location)
 }
+
+// ฟังก์ชัน Handler สำหรับการแก้ไขที่อยู่
+func (h *LocationHandler) UpdateLocationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		utils.SendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	var location models.Location
+	if err := json.NewDecoder(r.Body).Decode(&location); err != nil {
+		utils.SendJSONResponse(w, http.StatusBadRequest, false, "Invalid request body", nil)
+		return
+	}
+
+	if location.ID == "" {
+		utils.SendJSONResponse(w, http.StatusBadRequest, false, "Location ID is required for update", nil)
+		return
+	}
+
+	location.CreatedAt = time.Now() // หรือจะดึงค่าเดิมมาใส่ก็ได้
+
+	err := h.repo.SaveLocation(r.Context(), location)
+	if err != nil {
+		utils.SendJSONResponse(w, http.StatusInternalServerError, false, "Failed to update location", nil)
+		return
+	}
+
+	utils.SendJSONResponse(w, http.StatusOK, true, "Location updated successfully", location)
+}
+
+// ฟังก์ชัน Handler สำหรับการลบที่อยู่
+func (h *LocationHandler) DeleteLocationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		utils.SendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	// ดึง ID จาก Query Parameter เช่น /api/users/location_delete?id=xxxx
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		utils.SendJSONResponse(w, http.StatusBadRequest, false, "Missing 'id' parameter", nil)
+		return
+	}
+
+	err := h.repo.DeleteLocation(r.Context(), id)
+	if err != nil {
+		utils.SendJSONResponse(w, http.StatusInternalServerError, false, "Failed to delete location", nil)
+		return
+	}
+
+	utils.SendJSONResponse(w, http.StatusOK, true, "Location deleted successfully", map[string]string{"id": id})
+}

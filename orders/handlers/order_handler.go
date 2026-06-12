@@ -57,12 +57,8 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	// ✨ กำหนดสถานะเริ่มต้นของออเดอร์เป็น "new" (ออเดอร์ใหม่)
 	order.Status = "new"
 
-	// ----------------------------------------------------
-	// ✨ เพิ่มการรับค่า user_id จาก Form Data ตรงนี้
-	// ----------------------------------------------------
 	userID := c.FormValue("user_id")
 	if userID != "" {
 		order.UserID = userID
@@ -72,9 +68,26 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 			Message: "User ID is required",
 		})
 	}
+
+	if order.Shipping.LocationID != "" {
+		locationData, err := h.Repo.GetLocationByID(ctx, order.Shipping.LocationID)
+		if err != nil {
+			log.Printf("Error fetching location details: %v", err)
+			return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+				Success: false,
+				Message: "ไม่พบข้อมูลที่อยู่จัดส่งที่ระบุ (Location not found)",
+			})
+		}
+
+		order.Shipping.Recipient = locationData.Name
+		order.Shipping.Phone = locationData.Phone
+		order.Shipping.Address = locationData.Details
+		order.Shipping.Note = locationData.Note
+		order.Shipping.Location.Lat = locationData.Location.Lat
+		order.Shipping.Location.Lng = locationData.Location.Lng
+	}
 	// ----------------------------------------------------
 
-	// ✨ สร้าง Order ID อัตโนมัติ (วันเดือนปี-เวลา-มิลลิวินาที 3 หลัก)
 	if order.ID == "" {
 		now := time.Now()
 		timeStr := now.Format("20060102-150405")
@@ -82,18 +95,15 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		endOfDay := startOfDay.Add(24 * time.Hour)
 
-		// 🎯 เรียกใช้งาน Repo แทนการเขียน Query ตรงๆ ใน Handler
 		countToday, err := h.Repo.GetTodayOrderCount(ctx, startOfDay, endOfDay)
 		if err != nil {
 			log.Printf("Error counting today's orders: %v", err)
-			// ถ้า error จะให้ countToday เป็น 0 เพื่อให้ระบบรัน 001 ต่อไปได้ หรือจะ return error ก็ได้ครับ
 		}
 
 		nextSeq := countToday + 1
 		order.ID = fmt.Sprintf("ORD-%s-%03d", timeStr, nextSeq)
 	}
 
-	// Handle slip upload if payment method is promptpay and has slip
 	if order.Payment.Method == "promptpay" && order.Payment.HasSlip {
 		slipFile, err := c.FormFile("slip")
 		if err != nil {
@@ -113,7 +123,6 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		order.SlipURL = slipURL
 	}
 
-	// Handle home image upload
 	homeImageFile, err := c.FormFile("home_image")
 	if err == nil {
 		homeImageURL, err := h.uploadFile(ctx, homeImageFile, "home_images")
@@ -126,7 +135,6 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		order.HomeImageURL = homeImageURL
 	}
 
-	// Create order in database
 	if err := h.Repo.CreateOrder(ctx, &order); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
@@ -134,7 +142,6 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	// ✨ คืนค่าสำเร็จแบบสวยๆ พร้อมแนบข้อมูล Order กลับไปด้วย
 	return c.Status(fiber.StatusCreated).JSON(utils.APIResponse{
 		Success: true,
 		Message: "สร้างออเดอร์สำเร็จ",

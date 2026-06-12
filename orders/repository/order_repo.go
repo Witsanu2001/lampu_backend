@@ -190,3 +190,18 @@ func (r *OrderRepository) GetTodayOrderCount(ctx context.Context, startOfDay tim
 
 	return 0, nil
 }
+
+// ✨ ฟังก์ชันสำหรับไปดึงข้อมูลจากตาราง locations มาประกอบในออเดอร์
+func (r *OrderRepository) GetLocationByID(ctx context.Context, locationID string) (*models.UserLocation, error) {
+	snap, err := r.Client.Collection("locations").Doc(locationID).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var loc models.UserLocation
+	if err := snap.DataTo(&loc); err != nil {
+		return nil, err
+	}
+
+	return &loc, nil
+}

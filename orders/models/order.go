@@ -38,17 +38,20 @@ type Equipment struct {
 }
 
 type Location struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
+	Lat float64 `json:"lat" firestore:"lat"`
+	Lng float64 `json:"lng" firestore:"lng"`
 }
 
 type Shipping struct {
-	Address   string   `json:"address"`
-	Location  Location `json:"location"`
-	FeePerSet float64  `json:"feePerSet"`
-	TotalFee  float64  `json:"totalFee"`
+	LocationID string   `json:"location_id" firestore:"location_id"`
+	Recipient  string   `json:"recipient" firestore:"recipient"` // เก็บชื่อ
+	Phone      string   `json:"phone" firestore:"phone"`         // เก็บเบอร์
+	Address    string   `json:"address" firestore:"address"`     // เก็บรายละเอียดที่อยู่
+	Note       string   `json:"note" firestore:"note"`           // เก็บจุดสังเกต
+	Location   Location `json:"location" firestore:"location"`
+	FeePerSet  float64  `json:"feePerSet" firestore:"feePerSet"`
+	TotalFee   float64  `json:"totalFee" firestore:"totalFee"`
 }
-
 type Payment struct {
 	Method  string `json:"method"`
 	HasSlip bool   `json:"hasSlip"`
@@ -59,4 +62,15 @@ type Totals struct {
 	AddOnTotal  float64 `json:"addOnTotal"`
 	ShippingFee float64 `json:"shippingFee"`
 	GrandTotal  float64 `json:"grandTotal"`
+}
+
+type UserLocation struct {
+	Name     string `firestore:"name"`
+	Phone    string `firestore:"phone"`
+	Details  string `firestore:"details"`
+	Note     string `firestore:"note"`
+	Location struct {
+		Lat float64 `firestore:"lat"`
+		Lng float64 `firestore:"lng"`
+	} `firestore:"location"`
 }
