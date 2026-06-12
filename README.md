@@ -29,3 +29,15 @@ git push origin
 #อยากสลับกลับไปทำงานที่ dev อีกรอบทำยังไง
 
 git checkout dev
+
+git fetch
+
+git merge
+
+git pull
+
+git pull origin main
+
+หรือถ้า branch หลักเป็น master
+
+git pull origin master

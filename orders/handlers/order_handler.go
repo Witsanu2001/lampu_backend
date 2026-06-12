@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"orders/models"
 	"orders/repository"
@@ -76,15 +77,20 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 	// ✨ สร้าง Order ID อัตโนมัติ (วันเดือนปี-เวลา-มิลลิวินาที 3 หลัก)
 	if order.ID == "" {
 		now := time.Now()
-
-		// รูปแบบ: YYYYMMDD-HHMMSS (ใน Go ต้องใช้ตัวเลขมหัศจรรย์ 20060102-150405 เสมอ)
 		timeStr := now.Format("20060102-150405")
 
-		// ดึงเศษมิลลิวินาที 3 หลักมาใช้แทนลำดับ (ได้ค่าตั้งแต่ 000 ถึง 999)
-		milliSec := now.UnixMilli() % 1000
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endOfDay := startOfDay.Add(24 * time.Hour)
 
-		// นำมาต่อกัน จะได้ผลลัพธ์เช่น "ORD-20260611-221840-045"
-		order.ID = fmt.Sprintf("ORD-%s-%03d", timeStr, milliSec)
+		// 🎯 เรียกใช้งาน Repo แทนการเขียน Query ตรงๆ ใน Handler
+		countToday, err := h.Repo.GetTodayOrderCount(ctx, startOfDay, endOfDay)
+		if err != nil {
+			log.Printf("Error counting today's orders: %v", err)
+			// ถ้า error จะให้ countToday เป็น 0 เพื่อให้ระบบรัน 001 ต่อไปได้ หรือจะ return error ก็ได้ครับ
+		}
+
+		nextSeq := countToday + 1
+		order.ID = fmt.Sprintf("ORD-%s-%03d", timeStr, nextSeq)
 	}
 
 	// Handle slip upload if payment method is promptpay and has slip

@@ -19,7 +19,9 @@ func initFirebase() *firebase.App {
 
 	// สำคัญ: ต้องระบุชื่อ Bucket ของ Firebase Storage
 	config := &firebase.Config{
-		StorageBucket: "lampu-5a178.firebasestorage.app", // เปลี่ยนเป็นชื่อ Bucket ของคุณ
+		StorageBucket: "lampu-5a178.firebasestorage.app",
+
+		DatabaseURL: "https://lampu-5a178-default-rtdb.asia-southeast1.firebasedatabase.app",
 	}
 
 	var app *firebase.App
@@ -52,6 +54,7 @@ func main() {
 	defer firestoreClient.Close()
 
 	// Storage Client (เพิ่มเข้ามาใหม่)
+	// Storage Client (ของเดิมที่คุณมีอยู่แล้ว)
 	storageClient, err := appFirebase.Storage(ctx)
 	if err != nil {
 		log.Fatalf("error initializing storage: %v\n", err)
@@ -61,14 +64,23 @@ func main() {
 		log.Fatalf("error getting default bucket: %v\n", err)
 	}
 
+	// ✨ 1. เพิ่มโค้ดสร้าง Realtime Database Client ตรงนี้
+	rtdbClient, err := appFirebase.Database(ctx)
+	if err != nil {
+		log.Fatalf("error initializing realtime database: %v\n", err)
+	}
+
 	app := fiber.New()
 	app.Use(logger.New())
 
 	ordersApi := app.Group("/api/orders")
 
-	// ---- Menus (ส่วนที่เพิ่มเข้ามาใหม่) ----
 	menuRepo := repository.NewMenuRepository(firestoreClient)
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket)
+	// ... (โค้ด route menu ของเดิม) ...
+
+	// ✨ 2. ส่ง rtdbClient เข้าไปใน NewOrderRepository
+	orderRepo := repository.NewOrderRepository(firestoreClient, rtdbClient)
 
 	ordersApi.Post("/menus_add", menuHandler.CreateMenu)
 	ordersApi.Get("/menus_get", menuHandler.GetAllMenus)
@@ -76,7 +88,6 @@ func main() {
 	ordersApi.Put("/menus_edit/:id", menuHandler.UpdateMenu)
 	ordersApi.Delete("/menus_delete/:id", menuHandler.DeleteMenu)
 
-	orderRepo := repository.NewOrderRepository(firestoreClient)
 	bucketName := os.Getenv("FIREBASE_STORAGE_BUCKET")
 	if bucketName == "" {
 		bucketName = "lampu-5a178.firebasestorage.app"
