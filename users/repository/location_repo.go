@@ -51,6 +51,28 @@ func (r *LocationRepository) SaveLocation(ctx context.Context, location models.L
 	return err
 }
 
+func (r *LocationRepository) GetLocationsByUserID(ctx context.Context, userID string) ([]*models.Location, error) {
+	snapshots, err := r.Client.Collection("locations").
+		Where("user_id", "==", userID).
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	locations := make([]*models.Location, 0)
+	for _, snap := range snapshots {
+		var loc models.Location
+		if err := snap.DataTo(&loc); err != nil {
+			return nil, err
+		}
+		locations = append(locations, &loc)
+	}
+
+	return locations, nil
+}
+
 // ฟังก์ชันสำหรับลบที่อยู่จัดส่ง
 func (r *LocationRepository) DeleteLocation(ctx context.Context, id string) error {
 	_, err := r.Client.Collection("locations").Doc(id).Delete(ctx)

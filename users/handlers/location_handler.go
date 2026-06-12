@@ -46,6 +46,33 @@ func (h *LocationHandler) SaveLocationHandler(w http.ResponseWriter, r *http.Req
 	utils.SendJSONResponse(w, http.StatusOK, true, "Location saved successfully", location)
 }
 
+// ฟังก์ชัน Handler สำหรับดึงรายการที่อยู่
+func (h *LocationHandler) GetLocationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.SendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		utils.SendJSONResponse(w, http.StatusBadRequest, false, "Missing 'user_id' parameter", nil)
+		return
+	}
+
+	locations, err := h.repo.GetLocationsByUserID(r.Context(), userID)
+	if err != nil {
+		utils.SendJSONResponse(w, http.StatusInternalServerError, false, "Failed to fetch locations", nil)
+		return
+	}
+
+	// ถ้าไม่มีข้อมูล ให้ส่ง array ว่างกลับไปแทน null
+	if locations == nil {
+		locations = make([]*models.Location, 0)
+	}
+
+	utils.SendJSONResponse(w, http.StatusOK, true, "Locations fetched successfully", locations)
+}
+
 // ฟังก์ชัน Handler สำหรับการแก้ไขที่อยู่
 func (h *LocationHandler) UpdateLocationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {
