@@ -75,7 +75,7 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 	// กรองหาออเดอร์ที่มี user_id ตรงกับที่ส่งมา และเรียงตามเวลาที่สร้าง
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).
-		OrderBy("created_at", firestore.Desc). // ✨ แก้เป็น "created_at" เหมือนกัน
+		OrderBy("CreatedAt", firestore.Desc). // 👈 ✨ แก้กลับเป็นตัวพิมพ์ใหญ่ให้ตรงกับ Index ที่เราสร้างไว้ครับ
 		Documents(ctx).
 		GetAll()
 
