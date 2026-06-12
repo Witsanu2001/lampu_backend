@@ -48,7 +48,7 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, order *models.Order) 
 
 func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, error) {
 	// แก้จาก "created_at" เป็น "CreatedAt"
-	snapshots, err := r.Client.Collection("orders").OrderBy("CreatedAt", firestore.Desc).Documents(ctx).GetAll()
+	snapshots, err := r.Client.Collection("orders").OrderBy("created_at", firestore.Desc).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 	// กรองหาออเดอร์ที่มี user_id ตรงกับที่ส่งมา และเรียงตามเวลาที่สร้าง
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).
-		OrderBy("CreatedAt", firestore.Desc).
+		OrderBy("created_at", firestore.Desc). // ✨ แก้เป็น "created_at" เหมือนกัน
 		Documents(ctx).
 		GetAll()
 
@@ -114,24 +114,63 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*mo
 
 func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) error {
 
-	// ใช้ .Doc().Update() เพื่อเจาะจงอัปเดตเฉพาะฟิลด์ที่ต้องการ
+	// 1. อัปเดตสถานะลงในตาราง orders ของ Firestore (ของเดิม)
 	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, []firestore.Update{
 		{
 			Path:  "status",
 			Value: status,
 		},
 		{
-			Path:  "updated_at", // 🚨 ตรวจสอบว่าใน Database ของคุณใช้ key นี้ตัวเล็กหรือตัวใหญ่ (เช่น UpdatedAt)
+			Path:  "updated_at",
 			Value: time.Now(),
 		},
-		// (ทางเลือก) ถ้าต้องการเก็บประวัติว่าใครเป็นคนกดยืนยันออเดอร์นี้
 		{
 			Path:  "updated_by",
 			Value: userID,
 		},
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// 2. ✨ เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างเอกสารใหม่ในตาราง jobs
+	if status == "ready" {
+		// สร้างเอกสารใหม่ใน collection "jobs"
+		// (แนะนำให้ใช้ orderID เป็น Document ID ของตาราง jobs ไปเลย จะได้ค้นหาหรืออ้างอิงคู่กันได้ง่ายครับ)
+		jobRef := r.Client.Collection("jobs").Doc(orderID)
+
+		jobData := map[string]interface{}{
+			"id":         orderID,
+			"order_id":   orderID,
+			"user_id":    userID, // รับค่า user_id ของไรเดอร์ที่ส่งมาจากหน้าบ้าน
+			"status":     status, // สถานะ "ready"
+			"created_at": time.Now(),
+			"updated_at": time.Now(),
+		}
+
+		_, err = jobRef.Set(ctx, jobData)
+		if err != nil {
+			return err
+		}
+
+		// ⚡ ซิงค์ข้อมูลตาราง jobs ลง Realtime Database (RTDB) เพื่อให้แอปฝั่งไรเดอร์เห็นงานเด้งขึ้นมาทันที
+		refLiveJob := r.RTDBClient.NewRef("live_jobs/" + orderID)
+		_ = refLiveJob.Set(ctx, map[string]interface{}{
+			"order_id":   orderID,
+			"user_id":    userID,
+			"status":     status,
+			"updated_at": time.Now().Unix(),
+		})
+	}
+
+	// 3. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) เพื่อให้หน้าบ้านฝั่งลูกค้าและร้านค้าอัปเดต
+	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
+	_ = refLiveOrder.Update(ctx, map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now().Unix(),
+	})
+
+	return nil
 }
 
 func (r *OrderRepository) GetTodayOrderCount(ctx context.Context, startOfDay time.Time, endOfDay time.Time) (int64, error) {

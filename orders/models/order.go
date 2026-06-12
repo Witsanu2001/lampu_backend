@@ -3,19 +3,19 @@ package models
 import "time"
 
 type Order struct {
-	ID           string    `json:"id"`
-	UserID       string    `firestore:"user_id" json:"user_id"`
-	MainItems    []Item    `json:"mainItems"`
-	AddOnItems   []Item    `json:"addOnItems"`
-	Equipment    Equipment `json:"equipment"`
-	Shipping     Shipping  `json:"shipping"`
-	Payment      Payment   `json:"payment"`
-	Totals       Totals    `json:"totals"`
-	SlipURL      string    `json:"slip_url"`
-	HomeImageURL string    `json:"home_image_url"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Status       string    `json:"status"`
+	ID           string    `json:"id" firestore:"id"`
+	UserID       string    `json:"user_id" firestore:"user_id"`
+	MainItems    []Item    `json:"mainItems" firestore:"mainItems"`
+	AddOnItems   []Item    `json:"addOnItems" firestore:"addOnItems"`
+	Equipment    Equipment `json:"equipment" firestore:"equipment"`
+	Shipping     Shipping  `json:"shipping" firestore:"shipping"`
+	Payment      Payment   `json:"payment" firestore:"payment"`
+	Totals       Totals    `json:"totals" firestore:"totals"`
+	SlipURL      string    `json:"slip_url" firestore:"slip_url"`
+	HomeImageURL string    `json:"home_image_url" firestore:"home_image_url"`
+	CreatedAt    time.Time `json:"created_at" firestore:"created_at"` // ✨ เพิ่มตรงนี้
+	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"` // ✨ เพิ่มตรงนี้
+	Status       string    `json:"status" firestore:"status"`         // ✨ เพิ่มตรงนี้สำคัญมาก!
 }
 
 type Item struct {

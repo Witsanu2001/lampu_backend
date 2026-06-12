@@ -53,8 +53,6 @@ func main() {
 	}
 	defer firestoreClient.Close()
 
-	// Storage Client (เพิ่มเข้ามาใหม่)
-	// Storage Client (ของเดิมที่คุณมีอยู่แล้ว)
 	storageClient, err := appFirebase.Storage(ctx)
 	if err != nil {
 		log.Fatalf("error initializing storage: %v\n", err)
