@@ -13,9 +13,9 @@ type Order struct {
 	Totals       Totals    `json:"totals" firestore:"totals"`
 	SlipURL      string    `json:"slip_url" firestore:"slip_url"`
 	HomeImageURL string    `json:"home_image_url" firestore:"home_image_url"`
-	CreatedAt    time.Time `json:"created_at" firestore:"created_at"` // ✨ เพิ่มตรงนี้
-	UpdatedAt    time.Time `json:"updated_at" firestore:"updated_at"` // ✨ เพิ่มตรงนี้
-	Status       string    `json:"status" firestore:"status"`         // ✨ เพิ่มตรงนี้สำคัญมาก!
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Status       string    `json:"status" firestore:"status"`
 }
 
 type Item struct {
