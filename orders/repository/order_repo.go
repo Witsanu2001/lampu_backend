@@ -48,7 +48,7 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, order *models.Order) 
 
 func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, error) {
 	// แก้จาก "created_at" เป็น "CreatedAt"
-	snapshots, err := r.Client.Collection("orders").OrderBy("created_at", firestore.Desc).Documents(ctx).GetAll()
+	snapshots, err := r.Client.Collection("orders").OrderBy("CreatedAt", firestore.Desc).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
 	}
