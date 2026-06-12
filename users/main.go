@@ -48,13 +48,21 @@ func main() {
 	firestoreClient := initFirestore()
 	defer firestoreClient.Close()
 
+	// 🌟 1. สร้าง Repository ทั้งสองตัว
 	userRepo := repository.NewUserRepository(firestoreClient)
-	userHandler := handlers.NewUserHandler(userRepo)
+	locationRepo := repository.NewLocationRepository(firestoreClient) // เพิ่มบรรทัดนี้
 
+	// 🌟 2. สร้าง Handler ทั้งสองตัว
+	userHandler := handlers.NewUserHandler(userRepo)
+	locationHandler := handlers.NewLocationHandler(locationRepo) // เพิ่มบรรทัดนี้
+
+	// 3. กำหนด Route ให้ User
 	http.HandleFunc("/api/users/sync", userHandler.SyncUserHandler)
-	// http.HandleFunc("/api/users/:id", userHandler.GetByIDUsersHandler)
 	http.HandleFunc("/api/users/all", userHandler.GetAllUsersHandler)
 	http.HandleFunc("/api/users/get_rider", userHandler.GetRiderHandler)
+
+	// 🌟 4. กำหนด Route ให้ Location (เรียกผ่าน locationHandler)
+	http.HandleFunc("/api/users/location_add", locationHandler.SaveLocationHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -65,6 +73,5 @@ func main() {
 	}
 
 	log.Printf("User Service is running on port %s", port)
-	// รันเซิร์ฟเวอร์ด้วยมาตรฐาน Go (จะเรียกใช้ http.HandleFunc ด้านบน)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
