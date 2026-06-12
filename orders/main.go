@@ -10,6 +10,7 @@ import (
 	firebase "firebase.google.com/go/v4"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
 )
 
@@ -19,9 +20,9 @@ func initFirebase() *firebase.App {
 
 	// สำคัญ: ต้องระบุชื่อ Bucket ของ Firebase Storage
 	config := &firebase.Config{
+		ProjectID:     "lampu-5a178",
 		StorageBucket: "lampu-5a178.firebasestorage.app",
-
-		DatabaseURL: "https://lampu-5a178-default-rtdb.asia-southeast1.firebasedatabase.app",
+		DatabaseURL:   "https://lampu-5a178-default-rtdb.asia-southeast1.firebasedatabase.app",
 	}
 
 	var app *firebase.App
@@ -43,6 +44,11 @@ func initFirebase() *firebase.App {
 }
 
 func main() {
+
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("No ../.env file found. Using system environment variables.")
+	}
+
 	appFirebase := initFirebase()
 	ctx := context.Background()
 

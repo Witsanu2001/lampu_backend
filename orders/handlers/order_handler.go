@@ -213,6 +213,9 @@ func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 	// เรียกใช้ฟังก์ชันจาก Repo
 	orders, err := h.Repo.GetOrdersByUserID(ctx, userID)
 	if err != nil {
+
+		log.Printf("🔥 Firestore Error: %v", err)
+
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
 			Message: "Failed to get orders for this user",

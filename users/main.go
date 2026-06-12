@@ -52,6 +52,7 @@ func main() {
 	userHandler := handlers.NewUserHandler(userRepo)
 
 	http.HandleFunc("/api/users/sync", userHandler.SyncUserHandler)
+	// http.HandleFunc("/api/users/:id", userHandler.GetByIDUsersHandler)
 	http.HandleFunc("/api/users/all", userHandler.GetAllUsersHandler)
 	http.HandleFunc("/api/users/get_rider", userHandler.GetRiderHandler)
 

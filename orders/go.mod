@@ -4,6 +4,8 @@ go 1.25.8
 
 require firebase.google.com/go/v4 v4.20.0
 
+require github.com/joho/godotenv v1.5.1 // indirect
+
 require (
 	cel.dev/expr v0.25.2 // indirect
 	cloud.google.com/go v0.123.0 // indirect
