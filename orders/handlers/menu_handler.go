@@ -4,15 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"orders/models"
 	"orders/repository"
 	"strconv"
+	"strings"
 	"time"
 
 	"orders/utils"
 
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
+	firebase "firebase.google.com/go/v4"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -20,6 +23,7 @@ import (
 type MenuHandler struct {
 	Repo          *repository.MenuRepository
 	StorageBucket *storage.BucketHandle
+	App           *firebase.App
 }
 
 func NewMenuHandler(repo *repository.MenuRepository, bucket *storage.BucketHandle) *MenuHandler {
@@ -254,22 +258,34 @@ func (h *MenuHandler) UpdateMenu(c *fiber.Ctx) error {
 
 func (h *MenuHandler) DeleteMenu(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
-			Success: false,
-			Message: "Menu ID is required",
-		})
+
+	menu, err := h.Repo.GetMenuByID(c.Context(), id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(utils.APIResponse{Success: false, Message: "Menu not found"})
+	}
+
+	if menu.ImageURLMenu != "" {
+		// เรียกผ่าน utils. ตามด้วยชื่อฟังก์ชันตัวใหญ่
+		err := utils.DeleteImageFromStorage(c.Context(), h.StorageBucket, menu.ImageURLMenu)
+		if err != nil {
+			log.Printf("Warning: Failed to delete image: %v", err)
+		}
 	}
 
 	if err := h.Repo.DeleteMenu(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
-			Success: false,
-			Message: "Failed to delete menu",
-		})
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{Success: false, Message: "Failed to delete menu"})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
-		Success: true,
-		Message: "Menu deleted successfully",
-	})
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{Success: true, Message: "Deleted"})
+}
+
+// ฟังก์ชันช่วยดึง Path ออกจาก URL
+func extractPathFromURL(url string) string {
+	// ปรับให้เข้ากับโครงสร้าง URL ที่คุณเก็บไว้
+	parts := strings.Split(url, "/o/")
+	if len(parts) > 1 {
+		path := strings.Split(parts[1], "?")[0]
+		return strings.ReplaceAll(path, "%2F", "/") // เปลี่ยน %2F กลับเป็น /
+	}
+	return ""
 }

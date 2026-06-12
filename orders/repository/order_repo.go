@@ -47,7 +47,6 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, order *models.Order) 
 }
 
 func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, error) {
-	// แก้จาก "created_at" เป็น "CreatedAt"
 	snapshots, err := r.Client.Collection("orders").OrderBy("CreatedAt", firestore.Desc).Documents(ctx).GetAll()
 	if err != nil {
 		return nil, err
@@ -140,12 +139,12 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
 		jobData := map[string]interface{}{
-			"id":         orderID,
-			"order_id":   orderID,
-			"user_id":    userID, // รับค่า user_id ของไรเดอร์ที่ส่งมาจากหน้าบ้าน
-			"status":     status, // สถานะ "ready"
-			"created_at": time.Now(),
-			"updated_at": time.Now(),
+			"id":        orderID,
+			"order_id":  orderID,
+			"user_id":   userID, // รับค่า user_id ของไรเดอร์ที่ส่งมาจากหน้าบ้าน
+			"status":    status, // สถานะ "ready"
+			"CreatedAt": time.Now(),
+			"UpdatedAt": time.Now(),
 		}
 
 		_, err = jobRef.Set(ctx, jobData)
@@ -156,10 +155,10 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		// ⚡ ซิงค์ข้อมูลตาราง jobs ลง Realtime Database (RTDB) เพื่อให้แอปฝั่งไรเดอร์เห็นงานเด้งขึ้นมาทันที
 		refLiveJob := r.RTDBClient.NewRef("live_jobs/" + orderID)
 		_ = refLiveJob.Set(ctx, map[string]interface{}{
-			"order_id":   orderID,
-			"user_id":    userID,
-			"status":     status,
-			"updated_at": time.Now().Unix(),
+			"order_id":  orderID,
+			"user_id":   userID,
+			"status":    status,
+			"UpdatedAt": time.Now().Unix(),
 		})
 	}
 

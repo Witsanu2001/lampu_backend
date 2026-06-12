@@ -63,6 +63,18 @@ func (r *MenuRepository) GetMenusByType(ctx context.Context, typeMenu string) ([
 	return menus, nil
 }
 
+func (r *MenuRepository) GetMenuByID(ctx context.Context, id string) (*models.Menu, error) {
+	doc, err := r.Client.Collection("menus").Doc(id).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var menu models.Menu
+	if err := doc.DataTo(&menu); err != nil {
+		return nil, err
+	}
+	return &menu, nil
+}
+
 func (r *MenuRepository) UpdateMenu(ctx context.Context, id string, updates []firestore.Update) error {
 	_, err := r.Client.Collection("menus").Doc(id).Update(ctx, updates)
 	return err
