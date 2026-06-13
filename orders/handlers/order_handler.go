@@ -142,6 +142,25 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		})
 	}
 
+	lampuAdminUID := "U9728d3e3d66a3af73ee87768874cee0d"
+
+	lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง: %s",
+		order.ID,
+		order.Totals.GrandTotal,
+		order.Payment.Method,
+		order.Shipping.Recipient)
+
+	// ✨ ลบคำว่า 'go' ออก แล้วเขียนรับค่า Error ตรงๆ พร้อมพิมพ์ Log ก่อนและหลังส่ง
+	log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuAdminUID)
+
+	errLine := utils.SendOrderAdminNotification(lampuAdminUID, lineMsg)
+
+	if errLine != nil {
+		log.Printf("❌ ส่ง LINE ขัดข้อง Error: %v\n", errLine)
+	} else {
+		log.Println("✅ ส่ง LINE สำเร็จเรียบร้อย!")
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(utils.APIResponse{
 		Success: true,
 		Message: "สร้างออเดอร์สำเร็จ",
@@ -163,7 +182,7 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
 	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
-		Message: "ดึงข้อมูลออเดอร์ทั้งหมดสำเร็จ",
+		Message: "ดึงข้อมูลออเดอร์ของวันนี้สำเร็จ",
 		Data:    orders,
 	})
 }

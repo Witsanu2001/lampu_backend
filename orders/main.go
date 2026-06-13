@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"orders/handlers"
 	"orders/repository"
@@ -11,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
+	"github.com/line/line-bot-sdk-go/v7/linebot"
 	"google.golang.org/api/option"
 )
 
@@ -43,7 +45,27 @@ func initFirebase() *firebase.App {
 	return app
 }
 
+func SendOrderAdminNotification(adminUID string, orderDetails string) error {
+	// ใส่ Token ของคุณ
+	bot, err := linebot.New("b265bf9a0b64d6ff8844f1f4c8c9ce0d", "utFIjp6YeTghCpmCi5+fH65Ib8iFusrnIV3PTbhoQhMyvyU/gkYIbn6uNgg8npyN72QLI12ogPw2vFL/w6cp5Fnpzi43q6JgjIz2HW2dIM2PywIbt2ZsXLlyYKUOQBOwcW3A03L84j8WJRtcWcnIxgdB04t89/1O/w1cDnyilFU=")
+	if err != nil {
+		return fmt.Errorf("failed to create line bot: %v", err)
+	}
+
+	message := linebot.NewTextMessage(orderDetails)
+
+	_, err = bot.PushMessage(adminUID, message).Do()
+	if err != nil {
+		return fmt.Errorf("failed to push message: %v", err)
+	}
+
+	log.Println("ส่งแจ้งเตือนเข้า LINE ร้านเรียบร้อย!")
+	return nil
+}
+
 func main() {
+
+	fmt.Println("ระบบเชื่อมต่อกับ LINE SDK เรียบร้อยแล้ว!")
 
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("No ../.env file found. Using system environment variables.")
@@ -104,6 +126,32 @@ func main() {
 	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
 
 	ordersApi.Put("/orders_put/:id/status", orderHandler.UpdateOrderStatus)
+
+	app.Post("/api/test-line", func(c *fiber.Ctx) error {
+		type TestPayload struct {
+			LineUserID string `json:"line_user_id"`
+			Message    string `json:"message"`
+		}
+
+		var payload TestPayload
+		if err := c.BodyParser(&payload); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+		}
+
+		// เรียกใช้ฟังก์ชันส่ง LINE
+		err := SendOrderAdminNotification(payload.LineUserID, payload.Message)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"success": false,
+				"error":   err.Error(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "ส่งข้อความเข้า LINE สำเร็จ!",
+		})
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -27,6 +27,7 @@ type Item struct {
 }
 
 type Equipment struct {
+	NeedEquipment bool    `json:"needEquipment" firestore:"needEquipment"`
 	StoveCount    int     `json:"stoveCount"`
 	PanCount      int     `json:"panCount"`
 	CharcoalCount int     `json:"charcoalCount"`

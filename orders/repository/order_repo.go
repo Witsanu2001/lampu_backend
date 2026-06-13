@@ -47,7 +47,19 @@ func (r *OrderRepository) CreateOrder(ctx context.Context, order *models.Order) 
 }
 
 func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, error) {
-	snapshots, err := r.Client.Collection("orders").OrderBy("CreatedAt", firestore.Desc).Documents(ctx).GetAll()
+	// 1. คำนวณหาเวลาเริ่มต้นของวันนี้ (00:00:00) และวันพรุ่งนี้
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
+
+	// 2. คิวรี Firestore โดยกรองเวลา (>= เริ่มต้นวันนี้ และ < เริ่มต้นวันพรุ่งนี้)
+	snapshots, err := r.Client.Collection("orders").
+		Where("CreatedAt", ">=", startOfDay).
+		Where("CreatedAt", "<", startOfTomorrow).
+		OrderBy("CreatedAt", firestore.Desc).
+		Documents(ctx).
+		GetAll()
+
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +73,8 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, er
 			return nil, err
 		}
 
-		// ถ้าคุณต้องการดึง Document ID ของ Firestore มาใส่ใน Struct ด้วย ให้เพิ่มบรรทัดนี้ครับ:
-		// order.ID = snap.Ref.ID
+		// ดึง Document ID ของ Firestore มาใส่ใน Struct ด้วย (ถ้า Field ใน Struct ชื่อ ID)
+		order.ID = snap.Ref.ID
 
 		orders = append(orders, &order)
 	}
