@@ -2,6 +2,21 @@ package models
 
 import "time"
 
+// 🌟 วัตถุงานย่อยที่อยู่ในฟังก์ชัน active_jobs ของตาราง jobs
+type ActiveJobItem struct {
+	OrderID     string    `json:"order_id" firestore:"order_id"`
+	Status      string    `json:"status" firestore:"status"`
+	QueueNumber int       `json:"queue_number" firestore:"queue_number"`
+	AssignedAt  time.Time `json:"assigned_at" firestore:"assigned_at"`
+}
+
+// 🌟 เอกสารหลักในตาราง jobs (ใช้ rider_id เป็น Doc ID)
+type RiderJobDoc struct {
+	RiderID    string          `firestore:"rider_id"`
+	UpdatedAt  time.Time       `firestore:"updated_at"`
+	ActiveJobs []ActiveJobItem `firestore:"active_jobs"`
+}
+
 type Order struct {
 	ID           string    `json:"id" firestore:"id"`
 	UserID       string    `json:"user_id" firestore:"user_id"`
@@ -76,17 +91,11 @@ type UserLocation struct {
 	} `firestore:"location"`
 }
 
-type UpdateStatusRequest struct {
-	UserID string `json:"user_id" form:"user_id"`
-	Status string `json:"status" form:"status"`
-}
-
-type AssignJobPayload struct {
-	OrderID     string `json:"order_id"`
-	RiderID     string `json:"rider_id"`
-	QueueNumber int    `json:"queue_number"`
-}
-
-type BulkAssignRequest struct {
-	Jobs []AssignJobPayload `json:"jobs"`
+// 🌟 โครงสร้างข้อมูลสำหรับส่งออก API (รวมข้อมูลคิวงาน และ รายละเอียดออเดอร์)
+type JobDetailResponse struct {
+	OrderID      string    `json:"order_id"`
+	Status       string    `json:"status"`
+	QueueNumber  int       `json:"queue_number"`
+	AssignedAt   time.Time `json:"assigned_at"`
+	OrderDetails Order     `json:"order_details"`
 }

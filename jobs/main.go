@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"jobs/handlers"
+	"jobs/repository"
 	"log"
 	"os"
+
+	"jobs/middleware"
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/gofiber/fiber/v2"
@@ -49,11 +53,11 @@ func main() {
 	ctx := context.Background()
 
 	// 1. Initialize Firestore
-	_, err := appFirebase.Firestore(ctx)
+	firestoreClient, err := appFirebase.Firestore(ctx)
 	if err != nil {
 		log.Fatalf("error initializing firestore: %v\n", err)
 	}
-	// defer firestoreClient.Close() // เตรียมไว้เปิดใช้ตอนสร้าง Repository
+	defer firestoreClient.Close()
 
 	// 2. Initialize Realtime Database
 	_, err = appFirebase.Database(ctx)
@@ -66,6 +70,11 @@ func main() {
 
 	// ✨ ตั้งค่า Route Group สำหรับ jobs
 	jobsApi := app.Group("/api/jobs")
+
+	jobRepo := repository.NewJobRepository(firestoreClient)
+	jobHandler := handlers.NewJobHandler(jobRepo)
+
+	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobUser)
 
 	// Route ทดสอบว่า Service รันขึ้นไหม
 	jobsApi.Get("/health", func(c *fiber.Ctx) error {

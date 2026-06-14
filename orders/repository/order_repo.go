@@ -123,40 +123,40 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*mo
 	return &order, nil
 }
 
+// 🌟 3. อัปเดตฟังก์ชัน Repository
 func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) error {
 
-	// 1. อัปเดตสถานะลงในตาราง orders ของ Firestore (ของเดิม)
-	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, []firestore.Update{
-		{
-			Path:  "status",
-			Value: status,
-		},
-		{
-			Path:  "updated_at",
-			Value: time.Now(),
-		},
-		{
-			Path:  "updated_by",
-			Value: userID,
-		},
-	})
+	// สร้างตัวแปรเก็บสิ่งที่จะอัปเดตลงตาราง Orders
+	var updates []firestore.Update
+
+	updates = append(updates, firestore.Update{Path: "status", Value: status})
+	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
+
+	// 🌟 แยกเก็บคนละฟิลด์: ถ้าสถานะ ready ให้เซ็ตเป็น rider_id ของไรเดอร์
+	if status == "ready" {
+		updates = append(updates, firestore.Update{Path: "rider_id", Value: userID})
+	} else {
+		// ถ้าสถานะอื่น ให้เซ็ตเป็น updated_by ของแอดมิน
+		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
+	}
+
+	// 1. อัปเดตข้อมูลตาราง orders ลง Firestore
+	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
 	if err != nil {
 		return err
 	}
 
-	// 2. ✨ เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างเอกสารใหม่ในตาราง jobs
+	// 2. เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างงานส่งตาราง jobs
 	if status == "ready" {
-		// สร้างเอกสารใหม่ใน collection "jobs"
-		// (แนะนำให้ใช้ orderID เป็น Document ID ของตาราง jobs ไปเลย จะได้ค้นหาหรืออ้างอิงคู่กันได้ง่ายครับ)
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
 		jobData := map[string]interface{}{
-			"id":        orderID,
-			"order_id":  orderID,
-			"user_id":   userID, // รับค่า user_id ของไรเดอร์ที่ส่งมาจากหน้าบ้าน
-			"status":    status, // สถานะ "ready"
-			"CreatedAt": time.Now(),
-			"UpdatedAt": time.Now(),
+			"id":         orderID,
+			"order_id":   orderID,
+			"user_id":    userID, // ฟิลด์ user_id ในตารางนี้จะเก็บ ID ไรเดอร์
+			"status":     status,
+			"created_at": time.Now(),
+			"updated_at": time.Now(),
 		}
 
 		_, err = jobRef.Set(ctx, jobData)
@@ -164,17 +164,17 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 			return err
 		}
 
-		// ⚡ ซิงค์ข้อมูลตาราง jobs ลง Realtime Database (RTDB) เพื่อให้แอปฝั่งไรเดอร์เห็นงานเด้งขึ้นมาทันที
+		// ⚡ ซิงค์ข้อมูลลง Realtime Database (RTDB) ให้แอปไรเดอร์เด้งรับงานแบบ Real-time
 		refLiveJob := r.RTDBClient.NewRef("live_jobs/" + orderID)
 		_ = refLiveJob.Set(ctx, map[string]interface{}{
-			"order_id":  orderID,
-			"user_id":   userID,
-			"status":    status,
-			"UpdatedAt": time.Now().Unix(),
+			"order_id":   orderID,
+			"user_id":    userID,
+			"status":     status,
+			"updated_at": time.Now().Unix(),
 		})
 	}
 
-	// 3. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) เพื่อให้หน้าบ้านฝั่งลูกค้าและร้านค้าอัปเดต
+	// 3. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) เพื่อให้หน้าบ้านลูกค้ารู้ว่าเปลี่ยนสถานะแล้ว
 	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
 	_ = refLiveOrder.Update(ctx, map[string]interface{}{
 		"status":     status,
@@ -216,4 +216,81 @@ func (r *OrderRepository) GetLocationByID(ctx context.Context, locationID string
 	}
 
 	return &loc, nil
+}
+
+func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.AssignJobPayload) error {
+	// ถ้าไม่มีงานส่งมา ให้ข้ามไปเลย
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	batch := r.Client.Batch()
+	rtdbUpdates := make(map[string]interface{})
+	now := time.Now()
+	nowUnix := now.Unix()
+
+	// 🌟 ดึง RiderID ออกมา (เพราะการมอบหมายแบบ Bulk นี้คือการโยนให้ไรเดอร์ 1 คนพร้อมกัน)
+	riderID := jobs[0].RiderID
+
+	// 🌟 1. สร้างตัวแปร Array เอาไว้เก็บ Object งานทั้งหมด
+	var taskItems []interface{}
+
+	for _, job := range jobs {
+		// --- อัปเดตตาราง orders ---
+		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
+		batch.Update(orderRef, []firestore.Update{
+			{Path: "status", Value: "ready"},
+			{Path: "rider_id", Value: riderID},
+			{Path: "queue_number", Value: job.QueueNumber},
+			{Path: "updated_at", Value: now},
+		})
+
+		// 🌟 2. ประกอบร่าง Object สำหรับงาน 1 ชิ้น
+		taskObj := map[string]interface{}{
+			"order_id":     job.OrderID,
+			"status":       "ready",
+			"queue_number": job.QueueNumber,
+			"assigned_at":  now,
+		}
+		// จับยัดเข้า Array
+		taskItems = append(taskItems, taskObj)
+
+		// --- เตรียมข้อมูล RTDB ฝั่งลูกค้า/ร้านค้า (อัปเดตออเดอร์) ---
+		rtdbUpdates["live_orders/"+job.OrderID+"/status"] = "ready"
+		rtdbUpdates["live_orders/"+job.OrderID+"/updated_at"] = nowUnix
+
+		// --- เตรียมข้อมูล RTDB ฝั่งแอปไรเดอร์ (จัดกลุ่มตาม rider_id) ---
+		// โครงสร้างจะเป็น live_jobs/{rider_id}/{order_id}
+		rtdbUpdates["live_jobs/"+riderID+"/"+job.OrderID] = map[string]interface{}{
+			"status":       "ready",
+			"queue_number": job.QueueNumber,
+			"updated_at":   nowUnix,
+		}
+	}
+
+	// 🌟 3. บันทึก Array of Objects ลงตาราง "jobs"
+	// ใช้ RiderID เป็นชื่อ Document
+	jobRef := r.Client.Collection("jobs").Doc(riderID)
+
+	// ใช้ firestore.ArrayUnion เพื่อเอา Array งานใหม่ ไป "ต่อท้าย" งานเก่า (ถ้ามี)
+	// แต่ถ้าเป็นการสร้างครั้งแรก ระบบจะสร้าง Array ให้เอง
+	batch.Set(jobRef, map[string]interface{}{
+		"rider_id":    riderID,
+		"updated_at":  now,
+		"active_jobs": firestore.ArrayUnion(taskItems...), // ยัด Array ลงไปในฟิลด์นี้
+	}, firestore.MergeAll) // ใช้ MergeAll เผื่อว่ามีฟิลด์อื่นอยู่แล้วจะได้ไม่โดนลบทิ้ง
+
+	// สั่ง Commit ข้อมูล Firestore
+	_, err := batch.Commit(ctx)
+	if err != nil {
+		return err
+	}
+
+	// สั่งอัปเดตข้อมูล Realtime Database ทั้งหมด
+	err = r.RTDBClient.NewRef("/").Update(ctx, rtdbUpdates)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

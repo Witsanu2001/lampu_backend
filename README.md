@@ -45,3 +45,5 @@ git pull origin master
 #สร้างโครงสร้างโฟลเดอร์พื้นฐาน
 #รันคำสั่งเพื่อสร้างโฟลเดอร์แบบเดียวกับที่คุณมีใน Service orders:
 mkdir handlers models repository utils
+
+go run main.go

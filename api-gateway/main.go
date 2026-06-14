@@ -165,8 +165,14 @@ func main() {
 		log.Fatal("Error: ORDERS_SERVICE_URL is not set!")
 	}
 
+	jobsServiceURL := os.Getenv("JOBS_SERVICE_URL")
+	if jobsServiceURL == "" {
+		log.Fatal("Error: JOBS_SERVICE_URL is not set!")
+	}
+
 	userProxy := createProxy(userServiceURL)
 	orderProxy := createProxy(ordersServiceURL)
+	jobProxy := createProxy(jobsServiceURL)
 	router := http.NewServeMux()
 
 	router.HandleFunc("/api/auth/line", corsMiddleware(lineLoginHandler(app)))
@@ -180,10 +186,14 @@ func main() {
 		userProxy.ServeHTTP(w, r)
 	}))
 
-	// 🎯 4. เพิ่มเส้นทาง /api/orders/ ให้วิ่งไปหา Order Service
 	router.HandleFunc("/api/orders/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Forwarding request to Order Service: %s", r.URL.Path)
 		orderProxy.ServeHTTP(w, r)
+	}))
+
+	router.HandleFunc("/api/jobs/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Forwarding request to Jobs Service: %s", r.URL.Path)
+		jobProxy.ServeHTTP(w, r)
 	}))
 
 	port := os.Getenv("PORT")
