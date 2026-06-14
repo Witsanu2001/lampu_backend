@@ -26,4 +26,4 @@ jobs:
           region: asia-southeast1
           source: ./api-gateway
           # 🎯 แก้ไขบรรทัดนี้: ใส่ URL จริง และเพิ่ม ORDERS_SERVICE_URL เข้าไป (คั่นด้วยลูกน้ำ)
-          flags: "--allow-unauthenticated --set-env-vars=USER_SERVICE_URL=https://user-service-879165280409.asia-southeast1.run.app,ORDERS_SERVICE_URL=https://order-service-879165280409.asia-southeast1.run.app"
+          flags: "--allow-unauthenticated --set-env-vars=USER_SERVICE_URL=https://user-service-879165280409.asia-southeast1.run.app,ORDERS_SERVICE_URL=https://order-service-879165280409.asia-southeast1.run.app,JOBS_SERVICE_URL=https://jobs-service-879165280409.asia-southeast1.run.app"
