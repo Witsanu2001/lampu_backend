@@ -17,7 +17,7 @@ cd ..
 
 echo.
 echo [3/4] Deploying Job Service...
-cd Jobs
+cd jobs
 call gcloud run deploy Job-service --source . --region asia-southeast1 --allow-unauthenticated
 cd ..
 

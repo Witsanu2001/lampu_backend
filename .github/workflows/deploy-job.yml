@@ -25,5 +25,5 @@ jobs:
         with:
           service: job-service
           region: asia-southeast1
-          source: ./Jobs
+          source: ./jobs
           flags: '--allow-unauthenticated'
