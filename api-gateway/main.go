@@ -155,13 +155,11 @@ func main() {
 
 	app := initFirebase()
 
-	// 🎯 1. เช็ค URL ของ Users
 	userServiceURL := os.Getenv("USER_SERVICE_URL")
 	if userServiceURL == "" {
 		log.Fatal("Error: USER_SERVICE_URL is not set!")
 	}
 
-	// 🎯 2. เช็ค URL ของ Orders (ตัวแปรมี S ถูกต้องแล้ว)
 	ordersServiceURL := os.Getenv("ORDERS_SERVICE_URL")
 	if ordersServiceURL == "" {
 		log.Fatal("Error: ORDERS_SERVICE_URL is not set!")
