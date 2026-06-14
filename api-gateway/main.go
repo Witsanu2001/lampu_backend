@@ -175,7 +175,6 @@ func main() {
 		fmt.Fprintf(w, "Hello, API Gateway is working!")
 	}))
 
-	// 🎯 3. เพิ่มเส้นทาง /api/users/ ให้วิ่งไปหา User Service
 	router.HandleFunc("/api/users/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Forwarding request to User Service: %s", r.URL.Path)
 		userProxy.ServeHTTP(w, r)

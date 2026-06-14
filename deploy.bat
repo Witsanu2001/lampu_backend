@@ -25,7 +25,7 @@ echo.
 echo [4/4] Deploying API Gateway...
 cd api-gateway
 :: 🎯 แก้ไขบรรทัดนี้: เพิ่ม ORDERS_SERVICE_URL เข้าไปคั่นด้วยลูกน้ำ
-call gcloud run deploy api-gateway --source . --region asia-southeast1 --allow-unauthenticated --set-env-vars="USER_SERVICE_URL=https://user-service-879165280409.asia-southeast1.run.app,ORDERS_SERVICE_URL=https://order-service-879165280409.asia-southeast1.run.app"
+call gcloud run deploy api-gateway --source . --region asia-southeast1 --allow-unauthenticated --set-env-vars="USER_SERVICE_URL=https://user-service-879165280409.asia-southeast1.run.app,ORDERS_SERVICE_URL=https://order-service-879165280409.asia-southeast1.run.app,JOBS_SERVICE_URL=https://job-service-879165280409.asia-southeast1.run.app"
 cd ..
 
 echo.
