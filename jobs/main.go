@@ -76,7 +76,7 @@ func main() {
 	})
 
 	// ตั้งค่า Port เป็น 8083 สำหรับ Jobs Service
-	port := os.Getenv("JOBS_PORT")
+	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8083"
 	}
