@@ -10,6 +10,7 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/v7/linebot"
@@ -97,6 +98,11 @@ func main() {
 	}
 
 	app := fiber.New()
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization", // ต้องมี Authorization!
+		AllowMethods: "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
+	}))
 	app.Use(logger.New())
 
 	ordersApi := app.Group("/api/orders")
@@ -122,6 +128,10 @@ func main() {
 
 	ordersApi.Post("/orders_add", orderHandler.CreateOrder)
 	ordersApi.Get("/orders_get", orderHandler.GetAllOrders)
+
+	ordersApi.Get("/orders_new", orderHandler.GetNewOrders)
+	ordersApi.Get("/orders_delivery", orderHandler.GetDeliveryOrders)
+
 	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
 	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
 	ordersApi.Post("/bulk_assign", orderHandler.BulkAssignJobs)

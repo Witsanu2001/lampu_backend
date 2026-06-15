@@ -294,3 +294,72 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 
 	return nil
 }
+
+// 🌟 เพิ่ม parameter page และ limit
+func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
+
+	// 🌟 คำนวณหาตำแหน่งเริ่มต้น (Offset) ของหน้านั้นๆ
+	offset := (page - 1) * limit
+
+	query := r.Client.Collection("orders").
+		Where("status", "in", []string{"new", "preparing"}).
+		Where("CreatedAt", ">=", startOfDay).
+		Where("CreatedAt", "<", startOfTomorrow).
+		OrderBy("CreatedAt", firestore.Desc).
+		Offset(offset). // 🌟 สั่งข้ามข้อมูลตามเลขหน้า
+		Limit(limit)    // 🌟 จำกัดจำนวนที่ดึงมา
+
+	snapshots, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	orders := make([]*models.Order, 0)
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+		order.ID = snap.Ref.ID
+		orders = append(orders, &order)
+	}
+
+	return orders, nil
+}
+
+// 🌟 ทำแบบเดียวกันกับฝั่ง Delivery
+func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
+
+	offset := (page - 1) * limit
+
+	query := r.Client.Collection("orders").
+		Where("status", "in", []string{"ready", "shipping", "delivered"}).
+		Where("CreatedAt", ">=", startOfDay).
+		Where("CreatedAt", "<", startOfTomorrow).
+		OrderBy("CreatedAt", firestore.Desc).
+		Offset(offset).
+		Limit(limit)
+
+	snapshots, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	orders := make([]*models.Order, 0)
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+		order.ID = snap.Ref.ID
+		orders = append(orders, &order)
+	}
+
+	return orders, nil
+}

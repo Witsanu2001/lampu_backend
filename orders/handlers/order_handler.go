@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"orders/models"
 	"orders/repository"
+	"strconv"
 	"strings"
 	"time"
 
@@ -377,5 +378,66 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": "มอบหมายงานและจัดคิวเรียบร้อยแล้ว 🛵",
+	})
+}
+
+func (h *OrderHandler) GetNewOrders(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	userID, ok := c.Locals("user_id").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Unauthorized",
+		})
+	}
+
+	// 🌟 รับค่า page และ limit จาก Query String (กำหนดค่า Default เป็น page=1, limit=10)
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+
+	// 🌟 ส่ง page และ limit ไปให้ Repo ด้วย
+	orders, err := h.Repo.GetNewOrders(ctx, userID, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders: " + err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์สำเร็จ",
+		Data:    orders,
+	})
+}
+
+func (h *OrderHandler) GetDeliveryOrders(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	userID, ok := c.Locals("user_id").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Unauthorized",
+		})
+	}
+
+	// 🌟 รับค่า page และ limit
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+
+	orders, err := h.Repo.GetDeliveryOrders(ctx, userID, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders: " + err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลการจัดส่งสำเร็จ",
+		Data:    orders,
 	})
 }
