@@ -7,15 +7,43 @@ import (
 	"orders/handlers"
 	"orders/repository"
 	"os"
+	"strings"
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/v7/linebot"
 	"google.golang.org/api/option"
 )
+
+func AuthMiddleware(appFirebase *firebase.App) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "Missing token"})
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		ctx := context.Background()
+
+		// ดึง Auth Client
+		authClient, err := appFirebase.Auth(ctx)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "Auth client error"})
+		}
+
+		// Verify Token กับ Firebase
+		tokenInfo, err := authClient.VerifyIDToken(ctx, token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "Invalid token"})
+		}
+
+		// 🌟 เก็บ UID ไว้ใน c.Locals เพื่อให้ Handler เรียกใช้ได้
+		c.Locals("user_id", tokenInfo.UID)
+		return c.Next()
+	}
+}
 
 func initFirebase() *firebase.App {
 	ctx := context.Background()
@@ -98,14 +126,10 @@ func main() {
 	}
 
 	app := fiber.New()
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization", // ต้องมี Authorization!
-		AllowMethods: "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
-	}))
 	app.Use(logger.New())
 
 	ordersApi := app.Group("/api/orders")
+	ordersApi.Use(AuthMiddleware(appFirebase))
 
 	menuRepo := repository.NewMenuRepository(firestoreClient)
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket)
