@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"orders/models"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -82,11 +83,58 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, er
 	return orders, nil
 }
 
+// 🌟 เปลี่ยน Return type เป็น []models.SuccessOrderSummary
+func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.Time) ([]models.SuccessOrderSummary, error) {
+	// 1. คำนวณหาเวลาเริ่มต้นของวันที่ระบุ (00:00:00) และวันถัดไป
+	startOfDay := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
+	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
+
+	// 2. คิวรี Firestore
+	snapshots, err := r.Client.Collection("orders").
+		Where("status", "==", "success").
+		Where("CreatedAt", ">=", startOfDay).
+		Where("CreatedAt", "<", startOfTomorrow).
+		OrderBy("CreatedAt", firestore.Desc).
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 🌟 สร้าง Array ว่างของ Struct ตัวใหม่
+	ordersSummary := make([]models.SuccessOrderSummary, 0)
+
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+
+		order.ID = snap.Ref.ID
+
+		// 🌟 ประกอบร่างข้อมูล เอาเฉพาะส่วนที่อยากส่งออกไป
+		summary := models.SuccessOrderSummary{
+			OrderID:    order.ID,
+			Status:     order.Status,
+			Recipient:  order.Shipping.Recipient,
+			Address:    order.Shipping.Address,
+			GrandTotal: order.Totals.GrandTotal,
+			CreatedAt:  order.CreatedAt,
+		}
+
+		// นำไปใส่ใน Array
+		ordersSummary = append(ordersSummary, summary)
+	}
+
+	return ordersSummary, nil
+}
+
 func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) ([]*models.Order, error) {
 	// กรองหาออเดอร์ที่มี user_id ตรงกับที่ส่งมา และเรียงตามเวลาที่สร้าง
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).
-		OrderBy("CreatedAt", firestore.Desc). // 👈 ✨ แก้กลับเป็นตัวพิมพ์ใหญ่ให้ตรงกับ Index ที่เราสร้างไว้ครับ
+		OrderBy("CreatedAt", firestore.Desc).
 		Documents(ctx).
 		GetAll()
 
@@ -95,13 +143,32 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 	}
 
 	orders := make([]*models.Order, 0)
+	riderRefsMap := make(map[string]*firestore.DocumentRef)
+
 	for _, snap := range snapshots {
 		var order models.Order
 		if err := snap.DataTo(&order); err != nil {
 			return nil, err
 		}
+
+		order.ID = snap.Ref.ID
+
+		// 🎯 ✨ เพิ่มเงื่อนไขแปลงสถานะตรงนี้:
+		// ถ้าสถานะเป็น pending หรือ success ให้เปลี่ยนเป็น delivered ก่อนส่งออกไป
+		if order.Status == "pending" || order.Status == "success" {
+			order.Status = "delivered"
+		}
+
 		orders = append(orders, &order)
+
+		// ถ้ารายการไหนมีการมอบหมาย RiderID ไว้แล้ว ให้เก็บลง Map เพื่อเตรียมไปดึงข้อมูล
+		if order.RiderID != "" {
+			riderRefsMap[order.RiderID] = r.Client.Collection("users").Doc(order.RiderID)
+		}
 	}
+
+	// เรียกใช้ฟังก์ชันตัวช่วยเพื่อประกอบร่างชื่อไรเดอร์
+	r.attachRiderNames(ctx, orders, riderRefsMap)
 
 	return orders, nil
 }
@@ -123,65 +190,92 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*mo
 	return &order, nil
 }
 
-// 🌟 3. อัปเดตฟังก์ชัน Repository
-func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) error {
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) (string, error) {
 
-	// สร้างตัวแปรเก็บสิ่งที่จะอัปเดตลงตาราง Orders
+	// 1. ดึงข้อมูลออเดอร์ปัจจุบันมาเช็กก่อน
+	docSnap, err := r.Client.Collection("orders").Doc(orderID).Get(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	var order models.Order
+	if err := docSnap.DataTo(&order); err != nil {
+		return "", err
+	}
+
+	// 2. เช็กเงื่อนไขการเปลี่ยนสถานะอัตโนมัติ
+	finalStatus := status
+
+	// เงื่อนไขที่ 1: ถ้าเป็น delivered และจ่ายด้วย promptpay ให้เด้งไป pending อัตโนมัติ
+	if finalStatus == "delivered" {
+		// ใช้ strings.ToLower เพื่อป้องกันปัญหาตัวพิมพ์เล็ก-ใหญ่ (เช่น "PromptPay")
+		if strings.ToLower(order.Payment.Method) == "promptpay" {
+			finalStatus = "pending"
+		}
+	}
+
+	// เงื่อนไขที่ 2: ถ้ากำลังจะกลายเป็น pending แต่ "ไม่ใช้เตา" (needEquipment == false) ให้ข้ามไป success เลย
+	if finalStatus == "pending" {
+		if !order.Equipment.NeedEquipment {
+			finalStatus = "success"
+		}
+	}
+
+	// 3. สร้างตัวแปรเก็บสิ่งที่จะอัปเดตลงตาราง Orders (ใช้ finalStatus)
 	var updates []firestore.Update
-
-	updates = append(updates, firestore.Update{Path: "status", Value: status})
+	updates = append(updates, firestore.Update{Path: "status", Value: finalStatus})
 	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
 
-	// 🌟 แยกเก็บคนละฟิลด์: ถ้าสถานะ ready ให้เซ็ตเป็น rider_id ของไรเดอร์
-	if status == "ready" {
+	// แยกเก็บคนละฟิลด์
+	if finalStatus == "ready" {
 		updates = append(updates, firestore.Update{Path: "rider_id", Value: userID})
 	} else {
-		// ถ้าสถานะอื่น ให้เซ็ตเป็น updated_by ของแอดมิน
 		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
 	}
 
-	// 1. อัปเดตข้อมูลตาราง orders ลง Firestore
-	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
+	// 4. อัปเดตข้อมูลตาราง orders ลง Firestore
+	_, err = r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	// 2. เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างงานส่งตาราง jobs
-	if status == "ready" {
+	// 5. เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างงานส่งตาราง jobs
+	if finalStatus == "ready" {
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
 		jobData := map[string]interface{}{
 			"id":         orderID,
 			"order_id":   orderID,
-			"user_id":    userID, // ฟิลด์ user_id ในตารางนี้จะเก็บ ID ไรเดอร์
-			"status":     status,
+			"user_id":    userID,
+			"status":     finalStatus,
 			"created_at": time.Now(),
 			"updated_at": time.Now(),
 		}
 
 		_, err = jobRef.Set(ctx, jobData)
 		if err != nil {
-			return err
+			return "", err
 		}
 
-		// ⚡ ซิงค์ข้อมูลลง Realtime Database (RTDB) ให้แอปไรเดอร์เด้งรับงานแบบ Real-time
+		// ซิงค์ข้อมูลลง Realtime Database (RTDB) ให้แอปไรเดอร์เด้งรับงาน
 		refLiveJob := r.RTDBClient.NewRef("live_jobs/" + orderID)
 		_ = refLiveJob.Set(ctx, map[string]interface{}{
 			"order_id":   orderID,
 			"user_id":    userID,
-			"status":     status,
+			"status":     finalStatus,
 			"updated_at": time.Now().Unix(),
 		})
 	}
 
-	// 3. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) เพื่อให้หน้าบ้านลูกค้ารู้ว่าเปลี่ยนสถานะแล้ว
+	// 6. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) สำหรับลูกค้า
 	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
 	_ = refLiveOrder.Update(ctx, map[string]interface{}{
-		"status":     status,
+		"status":     finalStatus,
 		"updated_at": time.Now().Unix(),
 	})
 
-	return nil
+	// ⚡ คืนค่า finalStatus กลับไปให้ Handler
+	return finalStatus, nil
 }
 
 func (r *OrderRepository) GetTodayOrderCount(ctx context.Context, startOfDay time.Time, endOfDay time.Time) (int64, error) {
@@ -237,10 +331,11 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 
 	for _, job := range jobs {
 		// --- อัปเดตตาราง orders ---
+		// ✨ (มีฟิลด์ rider_id บันทึกอยู่แล้วตามโค้ดชุดเดิมของคุณ)
 		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
 		batch.Update(orderRef, []firestore.Update{
 			{Path: "status", Value: "ready"},
-			{Path: "rider_id", Value: riderID},
+			{Path: "rider_id", Value: riderID}, // อัปเดต ID ไรเดอร์ผู้รับผิดชอบงาน
 			{Path: "queue_number", Value: job.QueueNumber},
 			{Path: "updated_at", Value: now},
 		})
@@ -260,7 +355,6 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 		rtdbUpdates["live_orders/"+job.OrderID+"/updated_at"] = nowUnix
 
 		// --- เตรียมข้อมูล RTDB ฝั่งแอปไรเดอร์ (จัดกลุ่มตาม rider_id) ---
-		// โครงสร้างจะเป็น live_jobs/{rider_id}/{order_id}
 		rtdbUpdates["live_jobs/"+riderID+"/"+job.OrderID] = map[string]interface{}{
 			"status":       "ready",
 			"queue_number": job.QueueNumber,
@@ -269,18 +363,22 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 	}
 
 	// 🌟 3. บันทึก Array of Objects ลงตาราง "jobs"
-	// ใช้ RiderID เป็นชื่อ Document
 	jobRef := r.Client.Collection("jobs").Doc(riderID)
-
-	// ใช้ firestore.ArrayUnion เพื่อเอา Array งานใหม่ ไป "ต่อท้าย" งานเก่า (ถ้ามี)
-	// แต่ถ้าเป็นการสร้างครั้งแรก ระบบจะสร้าง Array ให้เอง
 	batch.Set(jobRef, map[string]interface{}{
 		"rider_id":    riderID,
 		"updated_at":  now,
-		"active_jobs": firestore.ArrayUnion(taskItems...), // ยัด Array ลงไปในฟิลด์นี้
-	}, firestore.MergeAll) // ใช้ MergeAll เผื่อว่ามีฟิลด์อื่นอยู่แล้วจะได้ไม่โดนลบทิ้ง
+		"active_jobs": firestore.ArrayUnion(taskItems...),
+	}, firestore.MergeAll)
 
-	// สั่ง Commit ข้อมูล Firestore
+	// 🌟 4. เพิ่มการอัปเดตสถานะของไรเดอร์ในตาราง "users" ให้เป็น "pending"
+	// เพื่อระบุว่าไรเดอร์คนนี้กำลังติดงาน/มีคิวงานค้างอยู่ ไม่พร้อมรับงานอื่นแทรก
+	userRef := r.Client.Collection("users").Doc(riderID)
+	batch.Update(userRef, []firestore.Update{
+		{Path: "status", Value: "pending"}, // ✨ ปรับสถานะเป็น pending ตามสั่ง
+		{Path: "updated_at", Value: now},
+	})
+
+	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore (หากจุดใดจุดหนึ่งพัง ระบบจะ Rollback ทั้งหมด)
 	_, err := batch.Commit(ctx)
 	if err != nil {
 		return err
@@ -295,13 +393,10 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 	return nil
 }
 
-// 🌟 เพิ่ม parameter page และ limit
 func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
-
-	// 🌟 คำนวณหาตำแหน่งเริ่มต้น (Offset) ของหน้านั้นๆ
 	offset := (page - 1) * limit
 
 	query := r.Client.Collection("orders").
@@ -309,8 +404,8 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		Where("CreatedAt", ">=", startOfDay).
 		Where("CreatedAt", "<", startOfTomorrow).
 		OrderBy("CreatedAt", firestore.Desc).
-		Offset(offset). // 🌟 สั่งข้ามข้อมูลตามเลขหน้า
-		Limit(limit)    // 🌟 จำกัดจำนวนที่ดึงมา
+		Offset(offset).
+		Limit(limit)
 
 	snapshots, err := query.Documents(ctx).GetAll()
 	if err != nil {
@@ -318,6 +413,8 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 	}
 
 	orders := make([]*models.Order, 0)
+	riderRefsMap := make(map[string]*firestore.DocumentRef) // 🌟 Map เก็บ Ref ของ Rider
+
 	for _, snap := range snapshots {
 		var order models.Order
 		if err := snap.DataTo(&order); err != nil {
@@ -325,17 +422,23 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		}
 		order.ID = snap.Ref.ID
 		orders = append(orders, &order)
+
+		// 🌟 ถ้ารายการไหนมี RiderID ให้เก็บลง Map เพื่อเตรียมไปดึงข้อมูล
+		if order.RiderID != "" {
+			riderRefsMap[order.RiderID] = r.Client.Collection("users").Doc(order.RiderID)
+		}
 	}
+
+	// 🌟 ดึงชื่อ Rider (ถ้ามี)
+	r.attachRiderNames(ctx, orders, riderRefsMap)
 
 	return orders, nil
 }
 
-// 🌟 ทำแบบเดียวกันกับฝั่ง Delivery
 func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
-
 	offset := (page - 1) * limit
 
 	query := r.Client.Collection("orders").
@@ -352,6 +455,8 @@ func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, 
 	}
 
 	orders := make([]*models.Order, 0)
+	riderRefsMap := make(map[string]*firestore.DocumentRef) // 🌟 Map เก็บ Ref ของ Rider
+
 	for _, snap := range snapshots {
 		var order models.Order
 		if err := snap.DataTo(&order); err != nil {
@@ -359,7 +464,62 @@ func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, 
 		}
 		order.ID = snap.Ref.ID
 		orders = append(orders, &order)
+
+		// 🌟 ถ้ารายการไหนมี RiderID ให้เก็บลง Map เพื่อเตรียมไปดึงข้อมูล
+		if order.RiderID != "" {
+			riderRefsMap[order.RiderID] = r.Client.Collection("users").Doc(order.RiderID)
+		}
 	}
 
+	// 🌟 ดึงชื่อ Rider (ถ้ามี)
+	r.attachRiderNames(ctx, orders, riderRefsMap)
+
 	return orders, nil
+}
+
+// 🌟 ฟังก์ชันดึงข้อมูล Rider Profile ทั้งก้อนมาประกอบร่างเข้ากับ Orders
+func (r *OrderRepository) attachRiderNames(ctx context.Context, orders []*models.Order, riderRefsMap map[string]*firestore.DocumentRef) {
+	if len(riderRefsMap) == 0 {
+		return
+	}
+
+	var refs []*firestore.DocumentRef
+	for _, ref := range riderRefsMap {
+		refs = append(refs, ref)
+	}
+
+	// ยิงไปดึงข้อมูลไรเดอร์ทั้งหมดในครั้งเดียว
+	userSnaps, err := r.Client.GetAll(ctx, refs)
+	if err != nil {
+		return // หากดึงไม่สำเร็จ ก็ปล่อยผ่านไป ไม่ต้องทำให้ API พัง
+	}
+
+	// 🎯 1. เปลี่ยน Map ให้เก็บ UserProfile ทั้งก้อน แทนที่จะเก็บแค่ string (ชื่อ)
+	riderProfiles := make(map[string]models.UserProfile)
+
+	for _, uSnap := range userSnaps {
+		if uSnap.Exists() {
+			var userProfile models.UserProfile
+
+			// 🎯 2. ใช้ DataTo แปลงข้อมูลจาก Firestore เข้า Struct UserProfile ทั้งก้อน
+			if err := uSnap.DataTo(&userProfile); err == nil {
+				// ยัด UID ใส่ไปด้วยเผื่อใน Document ไม่มีฟิลด์ UID
+				if userProfile.UID == "" {
+					userProfile.UID = uSnap.Ref.ID
+				}
+
+				// เก็บข้อมูลทั้งก้อนลงใน Map
+				riderProfiles[uSnap.Ref.ID] = userProfile
+			}
+		}
+	}
+
+	// 🎯 3. นำ Profile ทั้งก้อนกลับไปหยอดใส่ใน Object ของ Order
+	for _, order := range orders {
+		if order.RiderID != "" {
+			if profile, exists := riderProfiles[order.RiderID]; exists {
+				order.RiderName = profile // ⚡ ยัด UserProfile เข้าไปทั้งก้อน
+			}
+		}
+	}
 }

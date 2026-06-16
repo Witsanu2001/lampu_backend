@@ -3,19 +3,21 @@ package models
 import "time"
 
 type Order struct {
-	ID           string    `json:"id" firestore:"id"`
-	UserID       string    `json:"user_id" firestore:"user_id"`
-	MainItems    []Item    `json:"mainItems" firestore:"mainItems"`
-	AddOnItems   []Item    `json:"addOnItems" firestore:"addOnItems"`
-	Equipment    Equipment `json:"equipment" firestore:"equipment"`
-	Shipping     Shipping  `json:"shipping" firestore:"shipping"`
-	Payment      Payment   `json:"payment" firestore:"payment"`
-	Totals       Totals    `json:"totals" firestore:"totals"`
-	SlipURL      string    `json:"slip_url" firestore:"slip_url"`
-	HomeImageURL string    `json:"home_image_url" firestore:"home_image_url"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Status       string    `json:"status" firestore:"status"`
+	ID           string      `json:"id" firestore:"id"`
+	UserID       string      `json:"user_id" firestore:"user_id"`
+	MainItems    []Item      `json:"mainItems" firestore:"mainItems"`
+	AddOnItems   []Item      `json:"addOnItems" firestore:"addOnItems"`
+	Equipment    Equipment   `json:"equipment" firestore:"equipment"`
+	Shipping     Shipping    `json:"shipping" firestore:"shipping"`
+	Payment      Payment     `json:"payment" firestore:"payment"`
+	Totals       Totals      `json:"totals" firestore:"totals"`
+	SlipURL      string      `json:"slip_url" firestore:"slip_url"`
+	HomeImageURL string      `json:"home_image_url" firestore:"home_image_url"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
+	Status       string      `json:"status" firestore:"status"`
+	RiderID      string      `json:"rider_id" firestore:"rider_id"`
+	RiderName    UserProfile `json:"rider_name" firestore:"rider_name"`
 }
 
 type Item struct {
@@ -89,4 +91,23 @@ type AssignJobPayload struct {
 
 type BulkAssignRequest struct {
 	Jobs []AssignJobPayload `json:"jobs"`
+}
+
+type SuccessOrderSummary struct {
+	OrderID    string    `json:"order_id"`
+	Status     string    `json:"status"`
+	Recipient  string    `json:"recipient"`
+	Address    string    `json:"address"`
+	GrandTotal float64   `json:"grand_total"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type UserProfile struct {
+	UID         string    `json:"uid"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"displayName"`
+	PhotoURL    string    `json:"photoURL"`
+	Provider    string    `json:"provider"`
+	LastLogin   time.Time `json:"lastLogin"`
+	Role        string    `json:"role"`
 }

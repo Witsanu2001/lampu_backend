@@ -75,6 +75,8 @@ func main() {
 	jobHandler := handlers.NewJobHandler(jobRepo)
 
 	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobUser)
+	jobsApi.Get("/stove", middleware.AuthRequired(), jobHandler.GetStove)
+	jobsApi.Get("/stove_rider", middleware.AuthRequired(), jobHandler.GetStoveByRiderId)
 
 	// Route ทดสอบว่า Service รันขึ้นไหม
 	jobsApi.Get("/health", func(c *fiber.Ctx) error {

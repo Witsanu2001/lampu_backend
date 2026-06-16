@@ -183,6 +183,44 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	})
 }
 
+func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. ดึงค่าวันที่จาก Query Parameter (เช่น ?date=2026-06-16)
+	dateStr := c.Query("date")
+
+	// กำหนดวันที่จะใช้ค้นหาเริ่มต้นเป็น "วันนี้"
+	targetDate := time.Now()
+
+	// ถ้ามีการส่งวันที่เข้ามา ให้แปลง String เป็น time.Time
+	if dateStr != "" {
+		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+				Success: false,
+				Message: "รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้ YYYY-MM-DD",
+			})
+		}
+		targetDate = parsedDate
+	}
+
+	// 2. ส่ง targetDate เข้าไปใน Repo
+	orders, err := h.Repo.GetSuccessOrders(ctx, targetDate)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders: " + err.Error(),
+		})
+	}
+
+	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์สำเร็จ",
+		Data:    orders,
+	})
+}
+
 func (h *OrderHandler) uploadFile(ctx context.Context, file *multipart.FileHeader, folder string) (string, error) {
 	// Open the uploaded file
 	src, err := file.Open()
@@ -285,7 +323,6 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	ctx := context.Background()
 
-	// ดึง order_id จาก URL Parameter
 	orderID := c.Params("id")
 	if orderID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -294,14 +331,12 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// ดึงค่า user_id และ status จาก Request Body
 	var req models.UpdateStatusRequest
 	if err := c.BodyParser(&req); err != nil {
 		req.UserID = c.FormValue("user_id")
 		req.Status = c.FormValue("status")
 	}
 
-	// ตรวจสอบความถูกต้องของข้อมูล
 	if req.Status == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
@@ -315,8 +350,8 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// ส่งให้ Repository จัดการอัปเดต
-	err := h.Repo.UpdateOrderStatus(ctx, orderID, req.Status, req.UserID)
+	// 🌟 รับค่า finalStatus มาจาก Repository
+	finalStatus, err := h.Repo.UpdateOrderStatus(ctx, orderID, req.Status, req.UserID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -324,26 +359,57 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// สร้างข้อความตอบกลับ
 	var responseMsg string
-	switch req.Status {
+	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	var lineMsg string
+
+	// 🌟 ใช้ finalStatus มาเป็นตัวตัดสินใจในการตอบกลับ และส่ง LINE
+	switch finalStatus {
 	case "preparing":
 		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
+		lineMsg = fmt.Sprintf("🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร\nเลขออเดอร์: %s", orderID)
+
 	case "refuse":
 		responseMsg = "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
+		lineMsg = "🥘 ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..."
+
 	case "ready":
 		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
+		lineMsg = fmt.Sprintf("🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว\nเลขออเดอร์: %s", orderID)
+
 	case "shipping":
 		responseMsg = "กำลังนำส่งอาหารให้ลูกค้า 🚀"
+		lineMsg = fmt.Sprintf("🚀 กำลังนำส่งอาหารให้ลูกค้า\nเลขออเดอร์: %s", orderID)
+
 	case "delivered":
 		responseMsg = "จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย 🎉"
+		lineMsg = fmt.Sprintf("🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย\nเลขออเดอร์: %s", orderID)
+
+	case "pending":
+		responseMsg = "รับเงินสำเร็จ รอการเก็บเตาพรุ่งนี้ ⏳"
+
+	case "success":
+		responseMsg = "ออเดอร์เสร็จสมบูรณ์เรียบร้อยแล้ว 🎉"
+
 	default:
-		responseMsg = "อัปเดตสถานะสำเร็จ"
+		responseMsg = "อัปเดตสถานะเป็น " + finalStatus + " สำเร็จ"
+	}
+
+	// ⚡ ยุบโค้ดส่ง LINE ให้กระชับขึ้น (ส่งเฉพาะสถานะที่มีการจัดเตรียม lineMsg ไว้)
+	if lineMsg != "" {
+		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
+		errLine := utils.SendOrderUserNotification(lampuDeliveryUID, lineMsg)
+		if errLine != nil {
+			log.Printf("❌ ส่ง LINE ขัดข้อง Error: %v\n", errLine)
+		} else {
+			log.Println("✅ ส่ง LINE แจ้ง Lampu Delivery สำเร็จเรียบร้อย!")
+		}
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": responseMsg,
+		"status":  finalStatus, // ส่ง status ล่าสุดกลับไปให้หน้าบ้านเผื่อนำไปอัปเดต UI ด้วย
 	})
 }
 
@@ -366,13 +432,42 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// ส่งไปบันทึก
+	// 🎯 1. ส่งไปบันทึกข้อมูลใน Database ให้สำเร็จก่อน
 	err := h.Repo.BulkAssignJobs(ctx, req.Jobs)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
 			"message": "บันทึกข้อมูลล้มเหลว: " + err.Error(),
 		})
+	}
+
+	// 🎯 2. สร้างระบบแจ้งเตือนผ่าน LINE
+	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
+
+	for _, job := range req.Jobs {
+
+		orderData, err := h.Repo.GetOrderByID(ctx, job.OrderID)
+		if err != nil {
+			log.Printf("❌ ข้ามการส่ง LINE: ไม่พบข้อมูลออเดอร์ %s หรือดึงข้อมูลล้มเหลว: %v", job.OrderID, err)
+			continue // หากหาไม่เจอ ให้ข้ามไปทำออเดอร์ถัดไป
+		}
+
+		// ✨ เอาข้อมูล orderData ที่ดึงมาได้ มาสร้างข้อความ
+		lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง (กดเพื่อดูแผนที่): \nhttps://www.google.com/maps/search/?api=1&query=%f,%f",
+			orderData.ID,
+			orderData.Totals.GrandTotal,
+			orderData.Payment.Method,
+			orderData.Shipping.Location.Lat,
+			orderData.Shipping.Location.Lng)
+
+		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
+		errLine := utils.SendOrderRiderNotification(lampuDeliveryUID, lineMsg)
+
+		if errLine != nil {
+			log.Printf("❌ ส่ง LINE ขัดข้องสำหรับออเดอร์ %s Error: %v\n", job.OrderID, errLine)
+		} else {
+			log.Printf("✅ ส่ง LINE แจ้ง Lampu Delivery สำเร็จเรียบร้อย (ออเดอร์: %s)!\n", job.OrderID)
+		}
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

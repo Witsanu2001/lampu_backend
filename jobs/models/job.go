@@ -18,19 +18,21 @@ type RiderJobDoc struct {
 }
 
 type Order struct {
-	ID           string    `json:"id" firestore:"id"`
-	UserID       string    `json:"user_id" firestore:"user_id"`
-	MainItems    []Item    `json:"mainItems" firestore:"mainItems"`
-	AddOnItems   []Item    `json:"addOnItems" firestore:"addOnItems"`
-	Equipment    Equipment `json:"equipment" firestore:"equipment"`
-	Shipping     Shipping  `json:"shipping" firestore:"shipping"`
-	Payment      Payment   `json:"payment" firestore:"payment"`
-	Totals       Totals    `json:"totals" firestore:"totals"`
-	SlipURL      string    `json:"slip_url" firestore:"slip_url"`
-	HomeImageURL string    `json:"home_image_url" firestore:"home_image_url"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Status       string    `json:"status" firestore:"status"`
+	ID           string       `json:"id" firestore:"id"`
+	UserID       string       `json:"user_id" firestore:"user_id"`
+	MainItems    []Item       `json:"mainItems" firestore:"mainItems"`
+	AddOnItems   []Item       `json:"addOnItems" firestore:"addOnItems"`
+	Equipment    Equipment    `json:"equipment" firestore:"equipment"`
+	Shipping     Shipping     `json:"shipping" firestore:"shipping"`
+	Payment      Payment      `json:"payment" firestore:"payment"`
+	Totals       Totals       `json:"totals" firestore:"totals"`
+	SlipURL      string       `json:"slip_url" firestore:"slip_url"`
+	HomeImageURL string       `json:"home_image_url" firestore:"home_image_url"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	Status       string       `json:"status" firestore:"status"`
+	RiderID      string       `json:"rider_id" firestore:"rider_id"`
+	RiderProfile *UserProfile `json:"rider_profile,omitempty"`
 }
 
 type Item struct {
@@ -97,5 +99,31 @@ type JobDetailResponse struct {
 	Status       string    `json:"status"`
 	QueueNumber  int       `json:"queue_number"`
 	AssignedAt   time.Time `json:"assigned_at"`
+	Equipment    Equipment `json:"equipment"`
+	Shipping     Shipping  `json:"shipping"`
 	OrderDetails Order     `json:"order_details"`
+}
+
+type StoveDetailResponse struct {
+	OrderID      string         `json:"order_id"`
+	Status       string         `json:"status"`
+	Equipment    StoveEquipment `json:"equipment"`
+	Shipping     Shipping       `json:"shipping"`
+	RiderProfile UserProfile    `json:"rider_profile,omitempty"`
+}
+
+type UserProfile struct {
+	UID         string    `json:"uid"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"displayName"`
+	PhotoURL    string    `json:"photoURL"`
+	Provider    string    `json:"provider"`
+	LastLogin   time.Time `json:"lastLogin"`
+	Role        string    `json:"role"`
+}
+
+type StoveEquipment struct {
+	NeedEquipment bool `json:"needEquipment" firestore:"needEquipment"`
+	StoveCount    int  `json:"stoveCount"`
+	PanCount      int  `json:"panCount"`
 }
