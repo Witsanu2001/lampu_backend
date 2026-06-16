@@ -452,8 +452,8 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 			continue // หากหาไม่เจอ ให้ข้ามไปทำออเดอร์ถัดไป
 		}
 
-		// ✨ เอาข้อมูล orderData ที่ดึงมาได้ มาสร้างข้อความ
-		lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง (กดเพื่อดูแผนที่): \nhttps://www.google.com/maps/search/?api=1&query=%f,%f",
+		// ✨ แก้ไข: ปรับ URL แผนที่ Google Maps ให้แสดงพิกัดได้ถูกต้อง
+		lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง (กดเพื่อดูแผนที่): \nhttps://maps.google.com/?q=%f,%f",
 			orderData.ID,
 			orderData.Totals.GrandTotal,
 			orderData.Payment.Method,

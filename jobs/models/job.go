@@ -127,3 +127,20 @@ type StoveEquipment struct {
 	StoveCount    int  `json:"stoveCount"`
 	PanCount      int  `json:"panCount"`
 }
+
+type UpdateStoveStatusRequest struct {
+	OrderID         string `json:"order_id"`
+	IsComplete      bool   `json:"is_complete"` // true = เก็บครบ, false = เก็บไม่ครบ
+	CollectedStoves int    `json:"collected_stoves"`
+	CollectedPans   int    `json:"collected_pans"`
+	Reason          string `json:"reason"`
+}
+
+type StoveNote struct {
+	OrderID         string    `firestore:"order_id" json:"order_id"`
+	RiderID         string    `firestore:"rider_id" json:"rider_id"`
+	CollectedStoves int       `firestore:"collected_stoves" json:"collected_stoves"`
+	CollectedPans   int       `firestore:"collected_pans" json:"collected_pans"`
+	Reason          string    `firestore:"reason" json:"reason"`
+	CreatedAt       time.Time `firestore:"created_at" json:"created_at"`
+}

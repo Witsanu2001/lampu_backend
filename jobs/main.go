@@ -68,15 +68,22 @@ func main() {
 	app := fiber.New()
 	app.Use(logger.New())
 
-	// ✨ ตั้งค่า Route Group สำหรับ jobs
+	rtdbClient, err := appFirebase.Database(ctx)
+	if err != nil {
+		log.Fatalf("error initializing realtime database: %v\n", err)
+	}
+
 	jobsApi := app.Group("/api/jobs")
 
-	jobRepo := repository.NewJobRepository(firestoreClient)
+	jobRepo := repository.NewJobRepository(firestoreClient, rtdbClient)
 	jobHandler := handlers.NewJobHandler(jobRepo)
 
 	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobUser)
+	jobsApi.Get("/jobs_history", middleware.AuthRequired(), jobHandler.GetHistory)
 	jobsApi.Get("/stove", middleware.AuthRequired(), jobHandler.GetStove)
 	jobsApi.Get("/stove_rider", middleware.AuthRequired(), jobHandler.GetStoveByRiderId)
+
+	jobsApi.Post("/stove_status", middleware.AuthRequired(), jobHandler.PostStoveStatusFalse)
 
 	// Route ทดสอบว่า Service รันขึ้นไหม
 	jobsApi.Get("/health", func(c *fiber.Ctx) error {

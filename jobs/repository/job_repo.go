@@ -3,88 +3,167 @@ package repository
 import (
 	"context"
 	"jobs/models" // 🌟 เปลี่ยนเป็น path โมดูลของคุณ
+	"sort"
+	"time"
 
 	"cloud.google.com/go/firestore"
+	"firebase.google.com/go/v4/db"
 	"google.golang.org/api/iterator"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type JobRepository struct {
-	client *firestore.Client
+	client     *firestore.Client
+	RTDBClient *db.Client
 }
 
-func NewJobRepository(client *firestore.Client) *JobRepository {
-	return &JobRepository{client: client}
+func NewJobRepository(client *firestore.Client, rtdbClient *db.Client) *JobRepository {
+	return &JobRepository{
+		client:     client,
+		RTDBClient: rtdbClient,
+	}
 }
 
 // GetJobsByUser ดึงรายการคิวงานของไรเดอร์ พร้อมทั้งแมปข้อมูลรายละเอียดออเดอร์มาให้ครบถ้วน
-func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]models.JobDetailResponse, error) {
-	var responseList []models.JobDetailResponse
+func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]models.Order, error) {
+	// ป้องกันการ Return เป็น null
+	responseList := make([]models.Order, 0)
 
-	// 1. ดึงเอกสารงานของไรเดอร์คนนี้ (ใช้ userID เป็น Document ID โดยตรง)
-	docSnap, err := r.client.Collection("jobs").Doc(userID).Get(ctx)
-	if err != nil {
-		// ถ้าไม่พบเอกสาร (ยังไม่มีงาน) ให้รีเทิร์นอาเรย์ว่างกลับไป (ไม่นับเป็น error ของระบบ)
-		if status.Code(err) == codes.NotFound {
-			return []models.JobDetailResponse{}, nil
-		}
+	// 🌟 1. ดึงคิวงานจาก RTDB (เพื่อให้ได้ข้อมูลแบบ Realtime และ QueueNumber)
+	jobsRef := r.RTDBClient.NewRef("live_jobs/" + userID)
+
+	var liveJobs map[string]struct {
+		Status      string `json:"status"`
+		QueueNumber int    `json:"queue_number"`
+		UpdatedAt   int64  `json:"updated_at"`
+	}
+
+	if err := jobsRef.Get(ctx, &liveJobs); err != nil {
 		return nil, err
 	}
 
-	var riderDoc models.RiderJobDoc
-	if err := docSnap.DataTo(&riderDoc); err != nil {
-		return nil, err
+	// ถ้าไม่มีงานค้างอยู่ ให้รีเทิร์นอาเรย์ว่าง
+	if len(liveJobs) == 0 {
+		return responseList, nil
 	}
 
-	// หากไม่มีคิวงานค้างอยู่ ให้รีเทิร์นอาเรย์ว่าง
-	if len(riderDoc.ActiveJobs) == 0 {
-		return []models.JobDetailResponse{}, nil
-	}
-
-	// 2. ⚡ เตรียมดึงรายละเอียดจากตาราง "orders" แบบมัดรวมก้อนเดียว (GetAll)
+	// 🌟 2. เอา OrderID จาก RTDB มาสร้าง List เพื่อไปดึงข้อมูลเต็มๆ จาก "Firestore" (ตาราง orders)
 	var docRefs []*firestore.DocumentRef
-	for _, jobItem := range riderDoc.ActiveJobs {
-		orderRef := r.client.Collection("orders").Doc(jobItem.OrderID)
-		docRefs = append(docRefs, orderRef)
+	for orderID := range liveJobs {
+		// ชี้ไปที่ตาราง orders ใน Firestore
+		docRefs = append(docRefs, r.client.Collection("orders").Doc(orderID))
 	}
 
-	// ยิงไปดึงข้อมูลคำสั่งซื้อทั้งหมดในครั้งเดียว
+	// ยิง GetAll ไปที่ Firestore ครั้งเดียวได้ข้อมูลมาครบทุกออเดอร์
 	orderSnaps, err := r.client.GetAll(ctx, docRefs)
 	if err != nil {
 		return nil, err
 	}
 
-	// แปลงข้อมูลคำสั่งซื้อที่ได้มาเก็บไว้ในรูปของ Map [order_id] -> ข้อมูลออเดอร์
-	ordersMap := make(map[string]models.Order)
+	// 🌟 สร้าง Struct ชั่วคราวเพื่อเก็บออเดอร์พร้อมเลขคิว (เอาไว้ใช้ตอนเรียงลำดับ)
+	type jobTemp struct {
+		QueueNumber int
+		OrderData   models.Order
+	}
+	var tempJobs []jobTemp
+
+	// 3. วนลูปข้อมูลออเดอร์เต็มๆ ที่ได้จาก Firestore
 	for _, snap := range orderSnaps {
 		if !snap.Exists() {
 			continue
 		}
+
 		var order models.Order
 		if err := snap.DataTo(&order); err == nil {
-			ordersMap[snap.Ref.ID] = order
+			if order.ID == "" {
+				order.ID = snap.Ref.ID
+			}
+
+			// กรองเอาเฉพาะสถานะ "ready" และ "shipping"
+			if order.Status == "ready" || order.Status == "shipping" {
+				// 🎯 ดึง QueueNumber ที่จับคู่ไว้ในตัวแปร liveJobs (RTDB) มาใส่
+				queueNum := liveJobs[order.ID].QueueNumber
+
+				tempJobs = append(tempJobs, jobTemp{
+					QueueNumber: queueNum,
+					OrderData:   order,
+				})
+			}
 		}
 	}
 
-	// 3. ประกอบร่างข้อมูลคิวงานเข้ากับรายละเอียดของออเดอร์นั้นๆ
-	for _, jobItem := range riderDoc.ActiveJobs {
-		orderDetails, exists := ordersMap[jobItem.OrderID]
+	// 4. 🌟 เรียงลำดับคิว (Sort) ตาม QueueNumber จากน้อยไปมาก
+	sort.Slice(tempJobs, func(i, j int) bool {
+		return tempJobs[i].QueueNumber < tempJobs[j].QueueNumber
+	})
 
-		// กรณีฉุกเฉิน: ถ้าหากออเดอร์ตัวจริงถูกลบออกจากระบบไปแล้ว
-		if !exists {
-			orderDetails = models.Order{ID: jobItem.OrderID, Status: "unknown"}
+	// 5. ยัดใส่ responseList ส่งกลับไปให้หน้าบ้าน
+	for _, tj := range tempJobs {
+		responseList = append(responseList, tj.OrderData)
+	}
+
+	return responseList, nil
+}
+
+// อย่าลืมเช็ก import ว่ามี "time" อยู่ด้วยนะครับ
+func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr string, page int, limit int) ([]models.Order, error) {
+	// ป้องกันการ Return เป็น null
+	responseList := make([]models.Order, 0)
+
+	// 🌟 1. สร้าง Base Query ค้นหาจาก Firestore
+	query := r.client.Collection("orders").
+		Where("rider_id", "==", userID).
+		Where("status", "==", "delivered")
+
+	// 🌟 2. ถ้ามีการส่งวันที่มา ให้เพิ่มเงื่อนไขค้นหา
+	if dateStr != "" {
+		loc, _ := time.LoadLocation("Asia/Bangkok")
+		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			return nil, err
 		}
 
-		// รวมร่างเข้าโครงสร้างข้อมูลสำหรับ Response
-		detailRes := models.JobDetailResponse{
-			OrderID: jobItem.OrderID,
-			// Status:       jobItem.Status,
-			QueueNumber:  jobItem.QueueNumber,
-			AssignedAt:   jobItem.AssignedAt,
-			OrderDetails: orderDetails,
+		startOfDay := parsedDate
+		endOfDay := parsedDate.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+		query = query.Where("updated_at", ">=", startOfDay).
+			Where("updated_at", "<=", endOfDay)
+	}
+
+	// 🌟 3. เรียงลำดับจากล่าสุดไปเก่าสุด
+	query = query.OrderBy("updated_at", firestore.Desc)
+
+	// 🌟 4. ระบบ Pagination (หน้าละกี่รายการ)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10 // กำหนดค่าเริ่มต้นเป็น 10 เผื่อหน้าบ้านไม่ได้ส่งมา
+	}
+
+	// คำนวณข้ามรายการ (Offset) เช่น หน้า 2 (limit 10) จะต้องข้าม 10 รายการแรก
+	offset := (page - 1) * limit
+	query = query.Offset(offset).Limit(limit)
+
+	// 🌟 5. สั่งดึงข้อมูลจาก Firestore
+	iter := query.Documents(ctx)
+	defer iter.Stop()
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
 		}
-		responseList = append(responseList, detailRes)
+		if err != nil {
+			return nil, err
+		}
+
+		var order models.Order
+		if err := doc.DataTo(&order); err == nil {
+			if order.ID == "" {
+				order.ID = doc.Ref.ID
+			}
+			responseList = append(responseList, order)
+		}
 	}
 
 	return responseList, nil
@@ -183,9 +262,9 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 func (r *JobRepository) GetStoveByRiderId(ctx context.Context, userID string) ([]models.StoveDetailResponse, error) {
 	responseList := make([]models.StoveDetailResponse, 0)
 
-	// 🌟 เพิ่ม Where("rider_id", "==", userID) เพื่อกรองเฉพาะออเดอร์ของไรเดอร์คนนี้
+	// 🌟 ใช้ "in" และส่งค่าเป็น Slice []string เพื่อบอกว่าเอาสถานะไหนบ้าง
 	iter := r.client.Collection("orders").
-		Where("status", "==", "pending").
+		Where("status", "in", []string{"pending", "stoveFalse"}).
 		Where("rider_id", "==", userID).
 		Documents(ctx)
 	defer iter.Stop() // ปิด iterator เมื่อทำงานเสร็จ
@@ -225,4 +304,43 @@ func (r *JobRepository) GetStoveByRiderId(ctx context.Context, userID string) ([
 	}
 
 	return responseList, nil
+}
+
+func (r *JobRepository) PostStoveStatusFalse(ctx context.Context, req models.UpdateStoveStatusRequest, riderID string) error {
+	orderRef := r.client.Collection("orders").Doc(req.OrderID)
+
+	if req.IsComplete {
+		// 🌟 กรณีเก็บสำเร็จ (เก็บครบ)
+		_, err := orderRef.Update(ctx, []firestore.Update{
+			{Path: "status", Value: "success"},
+			{Path: "updated_at", Value: time.Now()},
+		})
+		return err
+	} else {
+		// 🌟 กรณีเก็บไม่ครบ (Stove False)
+		// ใช้ Batch เพื่อทำการอัปเดต Order และสร้าง Note ไปพร้อมๆ กัน
+		batch := r.client.Batch()
+
+		// 1. อัปเดตสถานะ Order เป็น stoveFalse
+		batch.Update(orderRef, []firestore.Update{
+			{Path: "status", Value: "stoveFalse"},
+			{Path: "updated_at", Value: time.Now()},
+		})
+
+		// 2. สร้างเอกสารใหม่ในตาราง stoves_note
+		noteRef := r.client.Collection("stoves_note").NewDoc()
+		noteData := models.StoveNote{
+			OrderID:         req.OrderID,
+			RiderID:         riderID,
+			CollectedStoves: req.CollectedStoves,
+			CollectedPans:   req.CollectedPans,
+			Reason:          req.Reason,
+			CreatedAt:       time.Now(),
+		}
+		batch.Set(noteRef, noteData)
+
+		// สั่งรันคำสั่งทั้งหมดใน Batch
+		_, err := batch.Commit(ctx)
+		return err
+	}
 }

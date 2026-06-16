@@ -331,7 +331,6 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 
 	for _, job := range jobs {
 		// --- อัปเดตตาราง orders ---
-		// ✨ (มีฟิลด์ rider_id บันทึกอยู่แล้วตามโค้ดชุดเดิมของคุณ)
 		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
 		batch.Update(orderRef, []firestore.Update{
 			{Path: "status", Value: "ready"},
@@ -363,22 +362,25 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 	}
 
 	// 🌟 3. บันทึก Array of Objects ลงตาราง "jobs"
-	jobRef := r.Client.Collection("jobs").Doc(riderID)
+	// ✨ แก้ไข: ให้สร้าง Document ใหม่เลยในแต่ละรอบ (แทนที่จะใช้ riderID เป็นชื่อ Doc)
+	jobRef := r.Client.Collection("jobs").NewDoc() // ให้ Firestore สุ่ม ID ใหม่ให้ทุกรอบการจ่ายงาน
 	batch.Set(jobRef, map[string]interface{}{
+		"job_id":      jobRef.ID, // เก็บ ID ของรอบจ่ายงานนี้ไว้ด้วยเผื่อใช้งาน
 		"rider_id":    riderID,
+		"created_at":  now,
 		"updated_at":  now,
-		"active_jobs": firestore.ArrayUnion(taskItems...),
-	}, firestore.MergeAll)
+		"active_jobs": taskItems, // ใส่ข้อมูล Array เข้าไปตรงๆ ได้เลย ไม่ต้องใช้ ArrayUnion แล้ว
+		"status":      "active",  // กำหนด status ของ job batch นี้
+	})
 
 	// 🌟 4. เพิ่มการอัปเดตสถานะของไรเดอร์ในตาราง "users" ให้เป็น "pending"
-	// เพื่อระบุว่าไรเดอร์คนนี้กำลังติดงาน/มีคิวงานค้างอยู่ ไม่พร้อมรับงานอื่นแทรก
 	userRef := r.Client.Collection("users").Doc(riderID)
 	batch.Update(userRef, []firestore.Update{
-		{Path: "status", Value: "pending"}, // ✨ ปรับสถานะเป็น pending ตามสั่ง
+		{Path: "status", Value: "pending"},
 		{Path: "updated_at", Value: now},
 	})
 
-	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore (หากจุดใดจุดหนึ่งพัง ระบบจะ Rollback ทั้งหมด)
+	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore
 	_, err := batch.Commit(ctx)
 	if err != nil {
 		return err

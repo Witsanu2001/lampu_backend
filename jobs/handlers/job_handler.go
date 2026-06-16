@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"jobs/models"
 	"jobs/repository"
 	"jobs/utils"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -42,6 +44,44 @@ func (h *JobHandler) GetJobUser(c *fiber.Ctx) error {
 		Success: true,
 		Message: "success",
 		Data:    jobs,
+	})
+}
+func (h *JobHandler) GetHistory(c *fiber.Ctx) error {
+	// ดึง ID ผู้ใช้
+	userID, ok := c.Locals("user_id").(string)
+	if !ok || userID == "" {
+		userID = c.Query("user_id")
+	}
+
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
+	}
+
+	// 🌟 รับค่า Date, Page, Limit จาก URL Query
+	dateStr := c.Query("date") // ถ้าไม่มีจะส่งสตริงว่างมา
+
+	page, err := strconv.Atoi(c.Query("page", "1"))
+	if err != nil {
+		page = 1
+	}
+
+	limit, err := strconv.Atoi(c.Query("limit", "10"))
+	if err != nil {
+		limit = 10
+	}
+
+	// 🌟 เรียก Repository พร้อมส่งค่า page และ limit เข้าไป
+	history, err := h.repo.GetHistory(c.Context(), userID, dateStr, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch history: " + err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "success",
+		"data":    history,
 	})
 }
 
@@ -101,5 +141,50 @@ func (h *JobHandler) GetStoveByRiderId(c *fiber.Ctx) error {
 		Success: true,
 		Message: "success",
 		Data:    jobs,
+	})
+}
+
+func (h *JobHandler) PostStoveStatusFalse(c *fiber.Ctx) error {
+	var req models.UpdateStoveStatusRequest
+
+	// 1. รับค่าจาก Request Body
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "รูปแบบข้อมูลไม่ถูกต้อง",
+		})
+	}
+
+	// 2. ตรวจสอบข้อมูลเบื้องต้น
+	if req.OrderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "กรุณาระบุ order_id",
+		})
+	}
+
+	if !req.IsComplete && req.Reason == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "กรุณาระบุเหตุผลกรณีที่เก็บอุปกรณ์ไม่ครบ",
+		})
+	}
+
+	// ดึง ID ไรเดอร์จาก Token (เพื่อเอาไปบันทึกว่าใครเป็นคนรายงาน)
+	riderID, _ := c.Locals("user_id").(string)
+
+	// 3. เรียกใช้งาน Repository
+	err := h.repo.PostStoveStatusFalse(c.Context(), req, riderID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "ไม่สามารถอัปเดตสถานะได้: " + err.Error(),
+		})
+	}
+
+	// 4. ส่งผลลัพธ์กลับ
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "อัปเดตสถานะการเก็บเตาเรียบร้อยแล้ว",
 	})
 }
