@@ -142,7 +142,6 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 			return
 		}
 
-		// --- ส่วนแปลงเป็น Firebase Token ด้านล่างคงเดิม ---
 		client, err := app.Auth(context.Background())
 		if err != nil {
 			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
