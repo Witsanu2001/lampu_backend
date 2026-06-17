@@ -107,44 +107,49 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 			return
 		}
 
-		// 🌟 1. ส่งแค่ id_token ไปให้ LINE ตรวจสอบ (ลบ client_id ออก)
-		resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
-			"id_token": {reqBody.IDToken},
-		})
-		if err != nil {
-			http.Error(w, "Failed to verify with LINE", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
+		// 🌟 1. ใส่ Channel ID ของทั้ง 2 แอป (ดอกแรก=Frontend, ดอกสอง=Rider)
+		clientIDs := []string{"2010209102", "2010385468"}
+		var validSub string
 
-		// 🌟 2. เพิ่มฟิลด์ Aud เพื่อรับค่า Channel ID ที่ LINE ส่งกลับมา
-		var lineRes struct {
-			Sub   string `json:"sub"`
-			Aud   string `json:"aud"` // ฟิลด์นี้คือ Channel ID (LIFF ID ส่วนหน้า)
-			Error string `json:"error"`
-		}
-		json.NewDecoder(resp.Body).Decode(&lineRes)
+		// 🌟 2. วนลูปเช็คทีละแอป
+		for _, clientID := range clientIDs {
+			// ส่ง ID Token พร้อมกับ Client ID ไปให้ LINE ตรวจสอบ
+			resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
+				"id_token":  {reqBody.IDToken},
+				"client_id": {clientID}, // 🚨 ต้องส่งไป ห้ามลบเด็ดขาดครับ
+			})
+			if err != nil {
+				continue // ถ้าเน็ตเวิร์กมีปัญหา ให้ข้ามไปลองรหัสถัดไป
+			}
 
-		// ถ้า Token ปลอมหรือหมดอายุ LINE จะส่ง Error กลับมา
-		if lineRes.Error != "" || lineRes.Sub == "" {
+			var lineRes struct {
+				Sub   string `json:"sub"`
+				Error string `json:"error"`
+			}
+			json.NewDecoder(resp.Body).Decode(&lineRes)
+			resp.Body.Close() // ปิดการเชื่อมต่อเพื่อประหยัดทรัพยากร
+
+			// 🌟 ถ้าไม่มี Error และมี UID (Sub) คืนมา แสดงว่ากุญแจดอกนี้ถูกต้อง!
+			if lineRes.Error == "" && lineRes.Sub != "" {
+				validSub = lineRes.Sub
+				break // หยุดลูปทันที
+			}
+		}
+
+		// 🌟 3. ถ้าลองครบทุกรหัสแล้วยังไม่ผ่าน ค่อยเตะออก (ขึ้น 401)
+		if validSub == "" {
 			http.Error(w, "Invalid LINE Token", http.StatusUnauthorized)
 			return
 		}
 
-		// 🌟 3. เช็คว่า Token นี้ถูกสร้างมาจากแอปของเราจริงๆ หรือไม่ (รองรับทั้ง 2 แอป)
-		if lineRes.Aud != "2010209102" && lineRes.Aud != "2010385468" {
-			log.Printf("⚠️ Unauthorized Channel ID: %s", lineRes.Aud)
-			http.Error(w, "Unauthorized Channel ID", http.StatusUnauthorized)
-			return
-		}
-
+		// --- ส่วนแปลงเป็น Firebase Token ด้านล่างคงเดิม ---
 		client, err := app.Auth(context.Background())
 		if err != nil {
 			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
 			return
 		}
 
-		customToken, err := client.CustomToken(context.Background(), lineRes.Sub)
+		customToken, err := client.CustomToken(context.Background(), validSub)
 		if err != nil {
 			log.Printf("🔥 Failed to create custom token: %v", err)
 			http.Error(w, "Error creating custom token", http.StatusInternalServerError)
