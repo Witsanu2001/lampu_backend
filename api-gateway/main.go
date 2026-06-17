@@ -107,9 +107,9 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 			return
 		}
 
+		// 🌟 1. ส่งแค่ id_token ไปให้ LINE ตรวจสอบ (ลบ client_id ออก)
 		resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
-			"id_token":  {reqBody.IDToken},
-			"client_id": {"2010209102"},
+			"id_token": {reqBody.IDToken},
 		})
 		if err != nil {
 			http.Error(w, "Failed to verify with LINE", http.StatusInternalServerError)
@@ -117,14 +117,24 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
+		// 🌟 2. เพิ่มฟิลด์ Aud เพื่อรับค่า Channel ID ที่ LINE ส่งกลับมา
 		var lineRes struct {
 			Sub   string `json:"sub"`
+			Aud   string `json:"aud"` // ฟิลด์นี้คือ Channel ID (LIFF ID ส่วนหน้า)
 			Error string `json:"error"`
 		}
 		json.NewDecoder(resp.Body).Decode(&lineRes)
 
+		// ถ้า Token ปลอมหรือหมดอายุ LINE จะส่ง Error กลับมา
 		if lineRes.Error != "" || lineRes.Sub == "" {
 			http.Error(w, "Invalid LINE Token", http.StatusUnauthorized)
+			return
+		}
+
+		// 🌟 3. เช็คว่า Token นี้ถูกสร้างมาจากแอปของเราจริงๆ หรือไม่ (รองรับทั้ง 2 แอป)
+		if lineRes.Aud != "2010209102" && lineRes.Aud != "2010385468" {
+			log.Printf("⚠️ Unauthorized Channel ID: %s", lineRes.Aud)
+			http.Error(w, "Unauthorized Channel ID", http.StatusUnauthorized)
 			return
 		}
 

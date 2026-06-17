@@ -104,6 +104,20 @@ func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]mod
 	return responseList, nil
 }
 
+func (r *JobRepository) GetJobByID(ctx context.Context, orderID string) (*models.Order, error) {
+	// ใช้ .Doc().Get() เพื่อดึงข้อมูลเอกสารแบบเจาะจง ID
+	snap, err := r.client.Collection("orders").Doc(orderID).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var order models.Order
+	if err := snap.DataTo(&order); err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
 // อย่าลืมเช็ก import ว่ามี "time" อยู่ด้วยนะครับ
 func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr string, page int, limit int) ([]models.Order, error) {
 	// ป้องกันการ Return เป็น null

@@ -46,6 +46,30 @@ func (h *JobHandler) GetJobUser(c *fiber.Ctx) error {
 		Data:    jobs,
 	})
 }
+
+func (h *JobHandler) GetJobByID(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	orderID := c.Params("id")
+	if orderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order ID is required",
+		})
+	}
+	order, err := h.repo.GetJobByID(ctx, orderID)
+	if err != nil {
+		// ดักจับกรณีที่เกิด Error หรือหาออเดอร์ไม่เจอ
+		return c.Status(fiber.StatusNotFound).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order not found or error occurred",
+		})
+	}
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงรายละเอียดออเดอร์สำเร็จ",
+		Data:    order,
+	})
+}
 func (h *JobHandler) GetHistory(c *fiber.Ctx) error {
 	// ดึง ID ผู้ใช้
 	userID, ok := c.Locals("user_id").(string)
