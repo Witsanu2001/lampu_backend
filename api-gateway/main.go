@@ -107,34 +107,49 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 			return
 		}
 
-		resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
-			"id_token":  {reqBody.IDToken},
-			"client_id": {"2010209102"},
-		})
-		if err != nil {
-			http.Error(w, "Failed to verify with LINE", http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
+		// 🌟 1. ใส่ Channel ID ของทั้ง 2 แอป (ดอกแรก=Frontend, ดอกสอง=Rider)
+		clientIDs := []string{"2010209102", "2010385468"}
+		var validSub string
 
-		var lineRes struct {
-			Sub   string `json:"sub"`
-			Error string `json:"error"`
-		}
-		json.NewDecoder(resp.Body).Decode(&lineRes)
+		// 🌟 2. วนลูปเช็คทีละแอป
+		for _, clientID := range clientIDs {
+			// ส่ง ID Token พร้อมกับ Client ID ไปให้ LINE ตรวจสอบ
+			resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
+				"id_token":  {reqBody.IDToken},
+				"client_id": {clientID}, // 🚨 ต้องส่งไป ห้ามลบเด็ดขาดครับ
+			})
+			if err != nil {
+				continue // ถ้าเน็ตเวิร์กมีปัญหา ให้ข้ามไปลองรหัสถัดไป
+			}
 
-		if lineRes.Error != "" || lineRes.Sub == "" {
+			var lineRes struct {
+				Sub   string `json:"sub"`
+				Error string `json:"error"`
+			}
+			json.NewDecoder(resp.Body).Decode(&lineRes)
+			resp.Body.Close() // ปิดการเชื่อมต่อเพื่อประหยัดทรัพยากร
+
+			// 🌟 ถ้าไม่มี Error และมี UID (Sub) คืนมา แสดงว่ากุญแจดอกนี้ถูกต้อง!
+			if lineRes.Error == "" && lineRes.Sub != "" {
+				validSub = lineRes.Sub
+				break // หยุดลูปทันที
+			}
+		}
+
+		// 🌟 3. ถ้าลองครบทุกรหัสแล้วยังไม่ผ่าน ค่อยเตะออก (ขึ้น 401)
+		if validSub == "" {
 			http.Error(w, "Invalid LINE Token", http.StatusUnauthorized)
 			return
 		}
 
+		// --- ส่วนแปลงเป็น Firebase Token ด้านล่างคงเดิม ---
 		client, err := app.Auth(context.Background())
 		if err != nil {
 			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
 			return
 		}
 
-		customToken, err := client.CustomToken(context.Background(), lineRes.Sub)
+		customToken, err := client.CustomToken(context.Background(), validSub)
 		if err != nil {
 			log.Printf("🔥 Failed to create custom token: %v", err)
 			http.Error(w, "Error creating custom token", http.StatusInternalServerError)
@@ -147,72 +162,6 @@ func lineLoginHandler(app *firebase.App) http.HandlerFunc {
 		})
 	}
 }
-
-// func lineLoginHandler(app *firebase.App) http.HandlerFunc {
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		var reqBody struct {
-// 			IDToken string `json:"id_token"`
-// 		}
-// 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-// 			http.Error(w, "Invalid request body", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		// 🌟 1. ใส่ Channel ID ของทั้ง 2 แอป (ดอกแรก=Frontend, ดอกสอง=Rider)
-// 		clientIDs := []string{"2010209102", "2010385468"}
-// 		var validSub string
-
-// 		// 🌟 2. วนลูปเช็คทีละแอป
-// 		for _, clientID := range clientIDs {
-// 			// ส่ง ID Token พร้อมกับ Client ID ไปให้ LINE ตรวจสอบ
-// 			resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/verify", url.Values{
-// 				"id_token":  {reqBody.IDToken},
-// 				"client_id": {clientID}, // 🚨 ต้องส่งไป ห้ามลบเด็ดขาดครับ
-// 			})
-// 			if err != nil {
-// 				continue // ถ้าเน็ตเวิร์กมีปัญหา ให้ข้ามไปลองรหัสถัดไป
-// 			}
-
-// 			var lineRes struct {
-// 				Sub   string `json:"sub"`
-// 				Error string `json:"error"`
-// 			}
-// 			json.NewDecoder(resp.Body).Decode(&lineRes)
-// 			resp.Body.Close() // ปิดการเชื่อมต่อเพื่อประหยัดทรัพยากร
-
-// 			// 🌟 ถ้าไม่มี Error และมี UID (Sub) คืนมา แสดงว่ากุญแจดอกนี้ถูกต้อง!
-// 			if lineRes.Error == "" && lineRes.Sub != "" {
-// 				validSub = lineRes.Sub
-// 				break // หยุดลูปทันที
-// 			}
-// 		}
-
-// 		// 🌟 3. ถ้าลองครบทุกรหัสแล้วยังไม่ผ่าน ค่อยเตะออก (ขึ้น 401)
-// 		if validSub == "" {
-// 			http.Error(w, "Invalid LINE Token", http.StatusUnauthorized)
-// 			return
-// 		}
-
-// 		// --- ส่วนแปลงเป็น Firebase Token ด้านล่างคงเดิม ---
-// 		client, err := app.Auth(context.Background())
-// 		if err != nil {
-// 			http.Error(w, "Error getting Auth client", http.StatusInternalServerError)
-// 			return
-// 		}
-
-// 		customToken, err := client.CustomToken(context.Background(), validSub)
-// 		if err != nil {
-// 			log.Printf("🔥 Failed to create custom token: %v", err)
-// 			http.Error(w, "Error creating custom token", http.StatusInternalServerError)
-// 			return
-// 		}
-
-// 		w.Header().Set("Content-Type", "application/json")
-// 		json.NewEncoder(w).Encode(map[string]string{
-// 			"firebase_token": customToken,
-// 		})
-// 	}
-// }
 
 func main() {
 	if err := godotenv.Load("../.env"); err != nil {
