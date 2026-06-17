@@ -112,6 +112,45 @@ func (h *JobHandler) GetStove(c *fiber.Ctx) error {
 	})
 }
 
+func (h *JobHandler) GetStoveSuccess(c *fiber.Ctx) error {
+	// ดึง ID ผู้ใช้
+	userID, ok := c.Locals("user_id").(string)
+	if !ok || userID == "" {
+		userID = c.Query("user_id")
+	}
+
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
+	}
+
+	// 🌟 รับค่า Date, Page, Limit จาก URL Query
+	dateStr := c.Query("date") // ถ้าไม่มีจะส่งสตริงว่างมา
+
+	page, err := strconv.Atoi(c.Query("page", "1"))
+	if err != nil {
+		page = 1
+	}
+
+	limit, err := strconv.Atoi(c.Query("limit", "10"))
+	if err != nil {
+		limit = 10
+	}
+
+	// 🌟 เรียก Repository พร้อมส่งค่า page และ limit เข้าไป
+	history, err := h.repo.GetStoveSuccess(c.Context(), userID, dateStr, page, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch history: " + err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "success",
+		"data":    history,
+	})
+}
+
 func (h *JobHandler) GetStoveByRiderId(c *fiber.Ctx) error {
 	// 🌟 1. ดึงจาก URL Parameters ก่อน (?rider_id=xxxx)
 	riderID := c.Query("rider_id")

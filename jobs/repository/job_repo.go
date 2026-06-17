@@ -112,7 +112,7 @@ func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr s
 	// 🌟 1. สร้าง Base Query ค้นหาจาก Firestore
 	query := r.client.Collection("orders").
 		Where("rider_id", "==", userID).
-		Where("status", "==", "delivered")
+		Where("status", "in", []string{"delivered", "success"})
 
 	// 🌟 2. ถ้ามีการส่งวันที่มา ให้เพิ่มเงื่อนไขค้นหา
 	if dateStr != "" {
@@ -249,6 +249,129 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 		if order.RiderID != "" {
 			if profile, exists := riderProfiles[order.RiderID]; exists {
 				// 🎯 เอาเครื่องหมาย & ออก เพื่อส่งเป็น Value ธรรมดา
+				detailRes.RiderProfile = profile
+			}
+		}
+
+		responseList = append(responseList, detailRes)
+	}
+
+	return responseList, nil
+}
+
+func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, dateStr string, page int, limit int) ([]models.StoveDetailResponse, error) {
+	// 🌟 ป้องกันไม่ให้ Return ออกไปเป็น null ถ้าไม่มีข้อมูล
+	responseList := make([]models.StoveDetailResponse, 0)
+
+	// 🌟 1. สร้าง Base Query ค้นหาจากตาราง "orders" ของไรเดอร์คนนี้
+	query := r.client.Collection("orders").
+		Where("rider_id", "==", userID).
+		Where("status", "==", "success")
+
+	// 🌟 2. กรองตามวันที่ (ถ้ามี)
+	if dateStr != "" {
+		loc, _ := time.LoadLocation("Asia/Bangkok")
+		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			return nil, err
+		}
+
+		startOfDay := parsedDate
+		endOfDay := parsedDate.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+		// ค้นหาจากวันที่เก็บเตาสำเร็จ (updated_at)
+		query = query.Where("updated_at", ">=", startOfDay).
+			Where("updated_at", "<=", endOfDay)
+	}
+
+	// 🌟 3. เรียงลำดับจากล่าสุดไปเก่าสุด
+	query = query.OrderBy("updated_at", firestore.Desc)
+
+	// 🌟 4. ระบบ Pagination (หน้าละกี่รายการ)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+	query = query.Offset(offset).Limit(limit)
+
+	// 🌟 5. ดึงข้อมูลจาก Firestore ตามเงื่อนไขที่เซ็ตไว้
+	iter := query.Documents(ctx)
+	defer iter.Stop()
+
+	// สร้างตัวแปรพักข้อมูล และ Map เก็บ Ref ของ Rider
+	var ordersData []models.Order
+	riderRefsMap := make(map[string]*firestore.DocumentRef)
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break // อ่านจบแล้ว ออกจากลูป
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var order models.Order
+		if err := doc.DataTo(&order); err != nil {
+			continue // ข้ามอันที่แปลงข้อมูลไม่ได้ไป
+		}
+
+		// เผื่อในเอกสารไม่มีฟิลด์ ID บันทึกไว้ ให้ใช้ Document ID เป็น OrderID
+		if order.ID == "" {
+			order.ID = doc.Ref.ID
+		}
+
+		ordersData = append(ordersData, order)
+
+		// ถ้ารายการไหนมีการแอสไซน์ไรเดอร์ไว้ ให้เก็บ Ref เอาไว้ไปดึงข้อมูล
+		if order.RiderID != "" {
+			riderRefsMap[order.RiderID] = r.client.Collection("users").Doc(order.RiderID)
+		}
+	}
+
+	// 6. 🌟 กวาดดึงข้อมูล Rider Profiles ทั้งหมดในครั้งเดียว (เฉพาะไรเดอร์ในหน้านี้)
+	riderProfiles := make(map[string]models.UserProfile)
+	if len(riderRefsMap) > 0 {
+		var refs []*firestore.DocumentRef
+		for _, ref := range riderRefsMap {
+			refs = append(refs, ref)
+		}
+
+		userSnaps, err := r.client.GetAll(ctx, refs)
+		if err == nil {
+			for _, uSnap := range userSnaps {
+				if uSnap.Exists() {
+					var userProfile models.UserProfile
+					if err := uSnap.DataTo(&userProfile); err == nil {
+						if userProfile.UID == "" {
+							userProfile.UID = uSnap.Ref.ID
+						}
+						riderProfiles[uSnap.Ref.ID] = userProfile
+					}
+				}
+			}
+		}
+	}
+
+	// 7. 🌟 ประกอบร่างข้อมูลออเดอร์ เข้ากับข้อมูลไรเดอร์
+	for _, order := range ordersData {
+		detailRes := models.StoveDetailResponse{
+			OrderID: order.ID,
+			Status:  order.Status,
+			Equipment: models.StoveEquipment{
+				NeedEquipment: order.Equipment.NeedEquipment,
+				StoveCount:    order.Equipment.StoveCount,
+				PanCount:      order.Equipment.PanCount,
+			},
+			Shipping: order.Shipping,
+		}
+
+		// ถ้ารหัส Rider ตรงกับที่เราดึงมาได้ ให้ยัด Profile เข้าไปทั้งก้อนเลย
+		if order.RiderID != "" {
+			if profile, exists := riderProfiles[order.RiderID]; exists {
 				detailRes.RiderProfile = profile
 			}
 		}
