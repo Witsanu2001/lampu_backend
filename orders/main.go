@@ -94,8 +94,6 @@ func SendOrderAdminNotification(adminUID string, orderDetails string) error {
 
 func main() {
 
-	fmt.Println("ระบบเชื่อมต่อกับ LINE SDK เรียบร้อยแล้ว!")
-
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Println("No ../.env file found. Using system environment variables.")
 	}
@@ -133,9 +131,6 @@ func main() {
 
 	menuRepo := repository.NewMenuRepository(firestoreClient)
 	menuHandler := handlers.NewMenuHandler(menuRepo, bucket)
-	// ... (โค้ด route menu ของเดิม) ...
-
-	// ✨ 2. ส่ง rtdbClient เข้าไปใน NewOrderRepository
 	orderRepo := repository.NewOrderRepository(firestoreClient, rtdbClient)
 
 	ordersApi.Post("/menus_add", menuHandler.CreateMenu)
