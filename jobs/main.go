@@ -74,18 +74,19 @@ func main() {
 	}
 
 	jobsApi := app.Group("/api/jobs")
+	jobsApi.Use(middleware.AuthRequired())
 
 	jobRepo := repository.NewJobRepository(firestoreClient, rtdbClient)
 	jobHandler := handlers.NewJobHandler(jobRepo)
 
-	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobUser)
-	jobsApi.Get("/jobs_get/:id", middleware.AuthRequired(), jobHandler.GetJobByID)
-	jobsApi.Get("/jobs_history", middleware.AuthRequired(), jobHandler.GetHistory)
-	jobsApi.Get("/stove", middleware.AuthRequired(), jobHandler.GetStove)
-	jobsApi.Get("/stove_success", middleware.AuthRequired(), jobHandler.GetStoveSuccess)
-	jobsApi.Get("/stove_rider", middleware.AuthRequired(), jobHandler.GetStoveByRiderId)
+	jobsApi.Get("/jobs_get", jobHandler.GetJobUser)
+	jobsApi.Get("/jobs_get/:id", jobHandler.GetJobByID)
+	jobsApi.Get("/jobs_history", jobHandler.GetHistory)
+	jobsApi.Get("/stove", jobHandler.GetStove)
+	jobsApi.Get("/stove_success", jobHandler.GetStoveSuccess)
+	jobsApi.Get("/stove_rider", jobHandler.GetStoveByRiderId)
 
-	jobsApi.Post("/stove_status", middleware.AuthRequired(), jobHandler.PostStoveStatusFalse)
+	jobsApi.Post("/stove_status", jobHandler.PostStoveStatusFalse)
 
 	jobsApi.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -97,9 +98,8 @@ func main() {
 	// ตั้งค่า Port เป็น 8083 สำหรับ Jobs Service
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8083"
+		port = "8082"
 	}
-
-	log.Printf("Jobs Service is running on port %s", port)
+	log.Printf("Service is running on port %s", port)
 	app.Listen(":" + port)
 }
