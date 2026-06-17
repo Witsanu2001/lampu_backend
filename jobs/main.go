@@ -87,7 +87,6 @@ func main() {
 
 	jobsApi.Post("/stove_status", middleware.AuthRequired(), jobHandler.PostStoveStatusFalse)
 
-	// Route ทดสอบว่า Service รันขึ้นไหม
 	jobsApi.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
