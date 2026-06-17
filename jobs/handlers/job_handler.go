@@ -70,6 +70,7 @@ func (h *JobHandler) GetJobByID(c *fiber.Ctx) error {
 		Data:    order,
 	})
 }
+
 func (h *JobHandler) GetHistory(c *fiber.Ctx) error {
 	// ดึง ID ผู้ใช้
 	userID, ok := c.Locals("user_id").(string)

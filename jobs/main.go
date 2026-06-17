@@ -79,7 +79,7 @@ func main() {
 	jobHandler := handlers.NewJobHandler(jobRepo)
 
 	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobUser)
-	jobsApi.Get("/jobs_get", middleware.AuthRequired(), jobHandler.GetJobByID)
+	jobsApi.Get("/jobs_get/:id", middleware.AuthRequired(), jobHandler.GetJobByID)
 	jobsApi.Get("/jobs_history", middleware.AuthRequired(), jobHandler.GetHistory)
 	jobsApi.Get("/stove", middleware.AuthRequired(), jobHandler.GetStove)
 	jobsApi.Get("/stove_success", middleware.AuthRequired(), jobHandler.GetStoveSuccess)
