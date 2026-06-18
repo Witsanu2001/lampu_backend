@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"orders/models"
 	"strings"
 	"time"
@@ -312,8 +313,7 @@ func (r *OrderRepository) GetLocationByID(ctx context.Context, locationID string
 	return &loc, nil
 }
 
-func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.AssignJobPayload) error {
-	// ถ้าไม่มีงานส่งมา ให้ข้ามไปเลย
+func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jobs []models.AssignJobPayload) error {
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -323,62 +323,67 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, jobs []models.Assi
 	now := time.Now()
 	nowUnix := now.Unix()
 
-	// 🌟 ดึง RiderID ออกมา (เพราะการมอบหมายแบบ Bulk นี้คือการโยนให้ไรเดอร์ 1 คนพร้อมกัน)
-	riderID := jobs[0].RiderID
-
-	// 🌟 1. สร้างตัวแปร Array เอาไว้เก็บ Object งานทั้งหมด
 	var taskItems []interface{}
+
+	var totalOrderSets int
+	var totalDeliveryFee float64
 
 	for _, job := range jobs {
 		// --- อัปเดตตาราง orders ---
 		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
 		batch.Update(orderRef, []firestore.Update{
 			{Path: "status", Value: "ready"},
-			{Path: "rider_id", Value: riderID}, // อัปเดต ID ไรเดอร์ผู้รับผิดชอบงาน
+			{Path: "rider_id", Value: riderID},
 			{Path: "queue_number", Value: job.QueueNumber},
 			{Path: "updated_at", Value: now},
 		})
 
-		// 🌟 2. ประกอบร่าง Object สำหรับงาน 1 ชิ้น
 		taskObj := map[string]interface{}{
 			"order_id":     job.OrderID,
 			"status":       "ready",
 			"queue_number": job.QueueNumber,
 			"assigned_at":  now,
 		}
-		// จับยัดเข้า Array
 		taskItems = append(taskItems, taskObj)
 
-		// --- เตรียมข้อมูล RTDB ฝั่งลูกค้า/ร้านค้า (อัปเดตออเดอร์) ---
 		rtdbUpdates["live_orders/"+job.OrderID+"/status"] = "ready"
 		rtdbUpdates["live_orders/"+job.OrderID+"/updated_at"] = nowUnix
-
-		// --- เตรียมข้อมูล RTDB ฝั่งแอปไรเดอร์ (จัดกลุ่มตาม rider_id) ---
 		rtdbUpdates["live_jobs/"+riderID+"/"+job.OrderID] = map[string]interface{}{
 			"status":       "ready",
 			"queue_number": job.QueueNumber,
 			"updated_at":   nowUnix,
 		}
+
+		totalOrderSets += job.OrderSetQty
+		totalDeliveryFee += job.DeliveryFee
 	}
 
-	// 🌟 3. บันทึก Array of Objects ลงตาราง "jobs"
-	// ✨ แก้ไข: ให้สร้าง Document ใหม่เลยในแต่ละรอบ (แทนที่จะใช้ riderID เป็นชื่อ Doc)
-	jobRef := r.Client.Collection("jobs").NewDoc() // ให้ Firestore สุ่ม ID ใหม่ให้ทุกรอบการจ่ายงาน
+	jobRef := r.Client.Collection("jobs").NewDoc()
 	batch.Set(jobRef, map[string]interface{}{
-		"job_id":      jobRef.ID, // เก็บ ID ของรอบจ่ายงานนี้ไว้ด้วยเผื่อใช้งาน
+		"job_id":      jobRef.ID,
 		"rider_id":    riderID,
 		"created_at":  now,
 		"updated_at":  now,
-		"active_jobs": taskItems, // ใส่ข้อมูล Array เข้าไปตรงๆ ได้เลย ไม่ต้องใช้ ArrayUnion แล้ว
-		"status":      "active",  // กำหนด status ของ job batch นี้
+		"active_jobs": taskItems,
 	})
 
-	// 🌟 4. เพิ่มการอัปเดตสถานะของไรเดอร์ในตาราง "users" ให้เป็น "pending"
 	userRef := r.Client.Collection("users").Doc(riderID)
 	batch.Update(userRef, []firestore.Update{
-		{Path: "status", Value: "pending"},
 		{Path: "updated_at", Value: now},
 	})
+
+	dateStr := now.Format("2006-01-02")
+	jobsEventID := fmt.Sprintf("%s_%s", riderID, dateStr)
+	jobsEventRef := r.Client.Collection("jobs_event").Doc(jobsEventID)
+
+	batch.Set(jobsEventRef, map[string]interface{}{
+		"rider_id":           riderID,
+		"date":               dateStr,
+		"status":             "pending",
+		"total_order_sets":   firestore.Increment(totalOrderSets),
+		"total_delivery_fee": firestore.Increment(totalDeliveryFee),
+		"updated_at":         now,
+	}, firestore.MergeAll)
 
 	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore
 	_, err := batch.Commit(ctx)

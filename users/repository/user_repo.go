@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"time"
 	"users/models"
 
 	"cloud.google.com/go/firestore"
@@ -63,12 +65,13 @@ func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserP
 	return &user, nil
 }
 
-func (r *UserRepository) GetRiders(ctx context.Context) ([]models.UserProfile, error) {
-	var riders []models.UserProfile
-
-	// ✨ แก้ไขจาก r.Client เป็น r.client (ตัวเล็ก) เพื่อให้ตรงกับ Struct ที่ประกาศไว้
+func (r *UserRepository) GetRiders(ctx context.Context) ([]models.RiderWithJobsResponse, error) {
+	var riders []models.RiderWithJobsResponse
 	iter := r.client.Collection("users").Where("Role", "==", "rider").Documents(ctx)
-	defer iter.Stop() // ✨ อย่าลืมเติม defer iter.Stop() เพื่อคืน resource ของหน่วยความจำด้วยครับ
+	defer iter.Stop()
+
+	// หาค่าวันที่ของวันนี้ (เช่น "2026-06-18")
+	todayDateStr := time.Now().Format("2006-01-02")
 
 	for {
 		doc, err := iter.Next()
@@ -83,8 +86,85 @@ func (r *UserRepository) GetRiders(ctx context.Context) ([]models.UserProfile, e
 		if err := doc.DataTo(&user); err != nil {
 			return nil, err
 		}
-		riders = append(riders, user)
+
+		// 🌟 1. สร้างตัวแปรรับค่า (ถ้าไม่มีงานจะเป็น nil อัตโนมัติ)
+		var currentJobsEvent *models.JobsEvent
+
+		// 🌟 2. ประกอบ Document ID (รูปแบบเดียวกับตอนที่เราบันทึกข้อมูล)
+		jobsEventID := fmt.Sprintf("%s_%s", user.UID, todayDateStr)
+
+		// 🌟 3. หยิบ Document นั้นขึ้นมาตรงๆ (เร็วกว่าการใช้ Where)
+		jobDoc, err := r.client.Collection("jobs_event").Doc(jobsEventID).Get(ctx)
+
+		// ถ้าหยิบมาได้และมีข้อมูลอยู่จริง ให้แปลงใส่ Struct
+		if err == nil && jobDoc.Exists() {
+			var event models.JobsEvent
+			if err := jobDoc.DataTo(&event); err == nil {
+				// ชี้ pointer ไปที่ข้อมูลที่ดึงมาได้
+				currentJobsEvent = &event
+			}
+		}
+
+		// 🌟 4. ประกอบร่างส่งกลับ
+		riders = append(riders, models.RiderWithJobsResponse{
+			UserProfile: user,
+			JobsEvent:   currentJobsEvent, // ส่งเป็น Object เดี่ยวๆ (ถ้าไม่มีข้อมูลจะเป็น null)
+		})
 	}
 
 	return riders, nil
 }
+
+// func (r *UserRepository) GetRiders_JobsEvent(ctx context.Context) ([]models.RiderWithJobsResponse, error) {
+// 	var riders []models.RiderWithJobsResponse
+// 	iter := r.client.Collection("users").Where("Role", "==", "rider").Documents(ctx)
+// 	defer iter.Stop()
+
+// 	for {
+// 		doc, err := iter.Next()
+// 		if err == iterator.Done {
+// 			break
+// 		}
+// 		if err != nil {
+// 			return nil, err
+// 		}
+
+// 		var user models.UserProfile
+// 		if err := doc.DataTo(&user); err != nil {
+// 			return nil, err
+// 		}
+
+// 		var riderJobsEvents []models.JobsEvent
+
+// 		// 🌟 ดึงข้อมูลจากตาราง jobs_event
+// 		jobsIter := r.client.Collection("jobs_event").Where("rider_id", "==", user.UID).Documents(ctx)
+
+// 		for {
+// 			jobDoc, jobErr := jobsIter.Next()
+// 			if jobErr == iterator.Done {
+// 				break
+// 			}
+// 			if jobErr != nil {
+// 				log.Printf("Error fetching jobs_event for rider %s: %v", user.UID, jobErr)
+// 				break
+// 			}
+
+// 			// 🌟 แมปข้อมูลเข้า Struct JobsEvent โดยตรง
+// 			var event models.JobsEvent
+// 			if err := jobDoc.DataTo(&event); err == nil {
+// 				riderJobsEvents = append(riderJobsEvents, event)
+// 			} else {
+// 				log.Printf("Error parsing jobs_event data: %v", err)
+// 			}
+// 		}
+// 		jobsIter.Stop()
+
+// 		// 🌟 ประกอบร่างแล้วยัดเข้า Array
+// 		riders = append(riders, models.RiderWithJobsResponse{
+// 			UserProfile: user,
+// 			JobsEvents:  riderJobsEvents,
+// 		})
+// 	}
+
+// 	return riders, nil
+// }

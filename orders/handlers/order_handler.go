@@ -360,7 +360,10 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	}
 
 	var responseMsg string
-	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
+
+	// 🌟 เปลี่ยนจากการใช้ค่า Hardcode มาเป็น req.UserID ที่รับเข้ามาจากหน้าบ้าน
+	lampuDeliveryUID := req.UserID
+
 	var lineMsg string
 
 	// 🌟 ใช้ finalStatus มาเป็นตัวตัดสินใจในการตอบกลับ และส่ง LINE
@@ -402,7 +405,7 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		if errLine != nil {
 			log.Printf("❌ ส่ง LINE ขัดข้อง Error: %v\n", errLine)
 		} else {
-			log.Println("✅ ส่ง LINE แจ้ง Lampu Delivery สำเร็จเรียบร้อย!")
+			log.Println("✅ ส่ง LINE แจ้งเตือนสำเร็จเรียบร้อย!")
 		}
 	}
 
@@ -432,8 +435,8 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// 🎯 1. ส่งไปบันทึกข้อมูลใน Database ให้สำเร็จก่อน
-	err := h.Repo.BulkAssignJobs(ctx, req.Jobs)
+	riderID := req.Jobs[0].RiderID
+	err := h.Repo.BulkAssignJobs(ctx, riderID, req.Jobs)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -441,18 +444,17 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// 🎯 2. สร้างระบบแจ้งเตือนผ่าน LINE
-	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	// 🌟 นำ riderID มาใช้เป็น UID สำหรับส่ง LINE
+	lampuDeliveryUID := riderID
 
 	for _, job := range req.Jobs {
 
 		orderData, err := h.Repo.GetOrderByID(ctx, job.OrderID)
 		if err != nil {
 			log.Printf("❌ ข้ามการส่ง LINE: ไม่พบข้อมูลออเดอร์ %s หรือดึงข้อมูลล้มเหลว: %v", job.OrderID, err)
-			continue // หากหาไม่เจอ ให้ข้ามไปทำออเดอร์ถัดไป
+			continue
 		}
 
-		// ✨ แก้ไข: ปรับ URL แผนที่ Google Maps ให้แสดงพิกัดได้ถูกต้อง
 		lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง (กดเพื่อดูแผนที่): \nhttps://maps.google.com/?q=%f,%f",
 			orderData.ID,
 			orderData.Totals.GrandTotal,
@@ -466,7 +468,7 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		if errLine != nil {
 			log.Printf("❌ ส่ง LINE ขัดข้องสำหรับออเดอร์ %s Error: %v\n", job.OrderID, errLine)
 		} else {
-			log.Printf("✅ ส่ง LINE แจ้ง Lampu Delivery สำเร็จเรียบร้อย (ออเดอร์: %s)!\n", job.OrderID)
+			log.Printf("✅ ส่ง LINE แจ้งไรเดอร์สำเร็จเรียบร้อย (ออเดอร์: %s)!\n", job.OrderID)
 		}
 	}
 

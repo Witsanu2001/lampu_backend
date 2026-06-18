@@ -98,7 +98,6 @@ func (h *UserHandler) GetRiderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✨ เรียกใช้ฟังก์ชัน GetRiders จาก Repo ที่เราเพิ่งสร้าง
 	riders, err := h.repo.GetRiders(r.Context())
 	if err != nil {
 		log.Printf("Error fetching riders from Firestore: %v", err)
@@ -106,11 +105,11 @@ func (h *UserHandler) GetRiderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ถ้าไม่มีคนขับเลย ให้คืนค่าเป็น Array เปล่า [] แทนที่จะเป็น null
+	// 🌟 เปลี่ยนให้ตรงกับชื่อ Struct ใหม่ หากไม่มีข้อมูลให้ส่ง Array เปล่า
 	if riders == nil {
-		riders = []models.UserProfile{}
+		riders = []models.RiderWithJobsResponse{}
 	}
 
-	// ✨ ส่งข้อมูลกลับไปแบบสวยๆ ผ่าน APIResponse
+	// ส่งข้อมูลกลับไปแบบสวยๆ
 	sendJSONResponse(w, http.StatusOK, true, "Riders retrieved successfully", riders)
 }
