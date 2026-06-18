@@ -10,6 +10,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/firestore/apiv1/firestorepb"
 	"firebase.google.com/go/v4/db"
+	"google.golang.org/api/iterator"
 )
 
 type OrderRepository struct {
@@ -175,10 +176,8 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 }
 
 func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*models.Order, error) {
-	// ใช้ .Doc().Get() เพื่อดึงข้อมูลเอกสารแบบเจาะจง ID
 	snap, err := r.Client.Collection("orders").Doc(orderID).Get(ctx)
 	if err != nil {
-		// หากหาไม่เจอ หรือเกิดข้อผิดพลาด จะส่ง error กลับไป
 		return nil, err
 	}
 
@@ -275,6 +274,111 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		"updated_at": time.Now().Unix(),
 	})
 
+	if finalStatus == "shipping" || finalStatus == "delivered" {
+		loc := time.FixedZone("UTC+7", 7*3600)
+		todayStr := time.Now().In(loc).Format("2006-01-02")
+
+		iterJob := r.Client.Collection("jobs").
+			Where("rider_id", "==", userID).
+			Where("status_job", "==", "active").
+			Limit(1).
+			Documents(ctx)
+
+		docJob, err := iterJob.Next()
+		var remainingCount int = 0
+		var foundJob bool = false
+
+		if err == nil {
+			var jobData map[string]interface{}
+			docJob.DataTo(&jobData)
+
+			// ดึงค่า Array ออกมาตรวจสอบ
+			if activeJobsRaw, ok := jobData["active_jobs"].([]interface{}); ok {
+				var updatedActiveJobs []interface{}
+				hasChanges := false
+
+				// วนลูปเช็กแต่ละออเดอร์ใน Array active_jobs
+				for _, itemRaw := range activeJobsRaw {
+					item, ok := itemRaw.(map[string]interface{})
+					if !ok {
+						updatedActiveJobs = append(updatedActiveJobs, itemRaw)
+						continue
+					}
+
+					// 💡 1. ถ้าเจอ order_id ที่เรากำลังอัปเดต ให้เปลี่ยนสถานะ
+					if item["order_id"] == orderID {
+						if finalStatus == "shipping" {
+							item["status"] = "start"
+						} else if finalStatus == "delivered" {
+							item["status"] = "success"
+						}
+						hasChanges = true
+					}
+
+					// 💡 2. นับจำนวนงานที่ยัง "ไม่สำเร็จ" (เช่น ready หรือ start)
+					if st, ok := item["status"].(string); ok {
+						if st == "ready" || st == "start" {
+							remainingCount++
+						}
+					}
+
+					updatedActiveJobs = append(updatedActiveJobs, item)
+				}
+
+				// ถ้ามีการเปลี่ยนสถานะใน Array สำเร็จ ให้ Update กลับลงไปที่ Firestore
+				if hasChanges {
+					foundJob = true
+					_, err = docJob.Ref.Update(ctx, []firestore.Update{
+						{Path: "active_jobs", Value: updatedActiveJobs},
+						{Path: "updated_at", Value: time.Now()},
+					})
+					if err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+
+		if foundJob {
+			iterEvent := r.Client.Collection("jobs_event").
+				Where("rider_id", "==", userID).
+				Where("date", "==", todayStr).
+				Where("status", "in", []string{"start", "pending"}).
+				Documents(ctx)
+			defer iterEvent.Stop()
+
+			for {
+				docEvent, err := iterEvent.Next()
+				if err == iterator.Done {
+					break
+				}
+				if err != nil {
+					return "", err
+				}
+
+				var eventStatus string
+				if finalStatus == "shipping" {
+					eventStatus = "start" // เริ่มไปส่ง
+				} else if finalStatus == "delivered" {
+					if remainingCount > 0 {
+						eventStatus = "pending" // ยังมีคิวอื่นรออยู่ใน Array active_jobs
+					} else {
+						eventStatus = "" // ส่งครบทุกคิวใน Array แล้ว
+					}
+				}
+
+				// อัปเดตสถานะลง jobs_event
+				_, err = docEvent.Ref.Update(ctx, []firestore.Update{
+					{Path: "status", Value: eventStatus},
+					{Path: "updated_at", Value: time.Now()},
+				})
+				if err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+
 	// ⚡ คืนค่า finalStatus กลับไปให้ Handler
 	return finalStatus, nil
 }
@@ -359,12 +463,14 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jo
 	}
 
 	jobRef := r.Client.Collection("jobs").NewDoc()
+	jobID := jobRef.ID
 	batch.Set(jobRef, map[string]interface{}{
-		"job_id":      jobRef.ID,
+		"job_id":      jobID,
 		"rider_id":    riderID,
 		"created_at":  now,
 		"updated_at":  now,
 		"active_jobs": taskItems,
+		"status_job":  "active",
 	})
 
 	userRef := r.Client.Collection("users").Doc(riderID)
@@ -383,6 +489,7 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jo
 		"total_order_sets":   firestore.Increment(totalOrderSets),
 		"total_delivery_fee": firestore.Increment(totalDeliveryFee),
 		"updated_at":         now,
+		"job_ids":            firestore.ArrayUnion(jobID),
 	}, firestore.MergeAll)
 
 	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore

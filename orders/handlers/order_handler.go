@@ -360,13 +360,10 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	}
 
 	var responseMsg string
-
-	// 🌟 เปลี่ยนจากการใช้ค่า Hardcode มาเป็น req.UserID ที่รับเข้ามาจากหน้าบ้าน
 	lampuDeliveryUID := req.UserID
 
 	var lineMsg string
 
-	// 🌟 ใช้ finalStatus มาเป็นตัวตัดสินใจในการตอบกลับ และส่ง LINE
 	switch finalStatus {
 	case "preparing":
 		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
