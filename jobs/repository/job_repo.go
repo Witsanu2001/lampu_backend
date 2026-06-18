@@ -23,12 +23,8 @@ func NewJobRepository(client *firestore.Client, rtdbClient *db.Client) *JobRepos
 	}
 }
 
-// GetJobsByUser ดึงรายการคิวงานของไรเดอร์ พร้อมทั้งแมปข้อมูลรายละเอียดออเดอร์มาให้ครบถ้วน
 func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]models.Order, error) {
-	// ป้องกันการ Return เป็น null
 	responseList := make([]models.Order, 0)
-
-	// 🌟 1. ดึงคิวงานจาก RTDB (เพื่อให้ได้ข้อมูลแบบ Realtime และ QueueNumber)
 	jobsRef := r.RTDBClient.NewRef("live_jobs/" + userID)
 
 	var liveJobs map[string]struct {
@@ -41,32 +37,26 @@ func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]mod
 		return nil, err
 	}
 
-	// ถ้าไม่มีงานค้างอยู่ ให้รีเทิร์นอาเรย์ว่าง
 	if len(liveJobs) == 0 {
 		return responseList, nil
 	}
 
-	// 🌟 2. เอา OrderID จาก RTDB มาสร้าง List เพื่อไปดึงข้อมูลเต็มๆ จาก "Firestore" (ตาราง orders)
 	var docRefs []*firestore.DocumentRef
 	for orderID := range liveJobs {
-		// ชี้ไปที่ตาราง orders ใน Firestore
 		docRefs = append(docRefs, r.client.Collection("orders").Doc(orderID))
 	}
 
-	// ยิง GetAll ไปที่ Firestore ครั้งเดียวได้ข้อมูลมาครบทุกออเดอร์
 	orderSnaps, err := r.client.GetAll(ctx, docRefs)
 	if err != nil {
 		return nil, err
 	}
 
-	// 🌟 สร้าง Struct ชั่วคราวเพื่อเก็บออเดอร์พร้อมเลขคิว (เอาไว้ใช้ตอนเรียงลำดับ)
 	type jobTemp struct {
 		QueueNumber int
 		OrderData   models.Order
 	}
 	var tempJobs []jobTemp
 
-	// 3. วนลูปข้อมูลออเดอร์เต็มๆ ที่ได้จาก Firestore
 	for _, snap := range orderSnaps {
 		if !snap.Exists() {
 			continue
@@ -78,9 +68,7 @@ func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]mod
 				order.ID = snap.Ref.ID
 			}
 
-			// กรองเอาเฉพาะสถานะ "ready" และ "shipping"
 			if order.Status == "ready" || order.Status == "shipping" {
-				// 🎯 ดึง QueueNumber ที่จับคู่ไว้ในตัวแปร liveJobs (RTDB) มาใส่
 				queueNum := liveJobs[order.ID].QueueNumber
 
 				tempJobs = append(tempJobs, jobTemp{
@@ -91,12 +79,22 @@ func (r *JobRepository) GetJobsByUser(ctx context.Context, userID string) ([]mod
 		}
 	}
 
-	// 4. 🌟 เรียงลำดับคิว (Sort) ตาม QueueNumber จากน้อยไปมาก
-	sort.Slice(tempJobs, func(i, j int) bool {
+	sort.SliceStable(tempJobs, func(i, j int) bool {
+		statusI := tempJobs[i].OrderData.Status
+		statusJ := tempJobs[j].OrderData.Status
+
+		// ดัน shipping ขึ้นไปก่อน
+		if statusI == "shipping" && statusJ != "shipping" {
+			return true
+		}
+		if statusI != "shipping" && statusJ == "shipping" {
+			return false
+		}
+
+		// กรณีสถานะเหมือนกัน ให้เรียงตาม QueueNumber จากน้อยไปมาก
 		return tempJobs[i].QueueNumber < tempJobs[j].QueueNumber
 	})
 
-	// 5. ยัดใส่ responseList ส่งกลับไปให้หน้าบ้าน
 	for _, tj := range tempJobs {
 		responseList = append(responseList, tj.OrderData)
 	}
@@ -181,6 +179,59 @@ func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr s
 	}
 
 	return responseList, nil
+}
+
+func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateStr string) (*models.JobSummaryResponse, error) {
+
+	// 🌟 1. ค้นหาจากฟิลด์ "date" ตรงๆ ได้เลย ไม่ต้องแปลงเวลาเป็น startOfDay / startOfTomorrow แล้ว
+	query := r.client.Collection("jobs_event").
+		Where("rider_id", "==", riderID).
+		Where("date", "==", dateStr) // ใช้ dateStr ("2026-06-19") เทียบได้เลย
+
+	snapshots, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	// ตัวแปรเก็บยอดรวม
+	totalRounds := 0
+	totalOrderSets := 0
+	totalDeliveryFee := 0
+
+	for _, snap := range snapshots {
+		var eventData map[string]interface{}
+		if err := snap.DataTo(&eventData); err != nil {
+			continue
+		}
+
+		// 🌟 2. นับจำนวนรอบ จากขนาดของ Array "job_ids"
+		if jobIDs, ok := eventData["job_ids"].([]interface{}); ok {
+			totalRounds += len(jobIDs)
+		}
+
+		// 🌟 3. ดึงค่าเงินจาก "total_delivery_fee"
+		if fee, ok := eventData["total_delivery_fee"].(int64); ok {
+			totalDeliveryFee += int(fee)
+		} else if feeFloat, ok := eventData["total_delivery_fee"].(float64); ok {
+			totalDeliveryFee += int(feeFloat)
+		}
+
+		// 🌟 4. ดึงจำนวนชุดหมูกระทะจาก "total_order_sets"
+		if sets, ok := eventData["total_order_sets"].(int64); ok {
+			totalOrderSets += int(sets)
+		} else if setsFloat, ok := eventData["total_order_sets"].(float64); ok {
+			totalOrderSets += int(setsFloat)
+		}
+	}
+
+	// 🌟 5. ส่งผลลัพธ์กลับไป (จัดแมปเข้า Struct ใหม่ที่แก้ไขแล้ว)
+	result := &models.JobSummaryResponse{
+		TotalRounds:      totalRounds,
+		TotalOrderSets:   totalOrderSets,
+		TotalDeliveryFee: totalDeliveryFee,
+	}
+
+	return result, nil
 }
 
 func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.StoveDetailResponse, error) {

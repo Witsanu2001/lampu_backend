@@ -82,6 +82,8 @@ func main() {
 	jobsApi.Get("/jobs_get", jobHandler.GetJobUser)
 	jobsApi.Get("/jobs_get/:id", jobHandler.GetJobByID)
 	jobsApi.Get("/jobs_history", jobHandler.GetHistory)
+	jobsApi.Get("/jobs_summary", jobHandler.GetJobSummary)
+
 	jobsApi.Get("/stove", jobHandler.GetStove)
 	jobsApi.Get("/stove_success", jobHandler.GetStoveSuccess)
 	jobsApi.Get("/stove_rider", jobHandler.GetStoveByRiderId)

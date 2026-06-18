@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"orders/models"
+	"sort"
 	"strings"
 	"time"
 
@@ -274,6 +275,7 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		"updated_at": time.Now().Unix(),
 	})
 
+	// 7. จัดการคิวงาน (jobs) และสถานะไรเดอร์ (jobs_event)
 	if finalStatus == "shipping" || finalStatus == "delivered" {
 		loc := time.FixedZone("UTC+7", 7*3600)
 		todayStr := time.Now().In(loc).Format("2006-01-02")
@@ -305,35 +307,51 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 						continue
 					}
 
-					// 💡 1. ถ้าเจอ order_id ที่เรากำลังอัปเดต ให้เปลี่ยนสถานะ
+					// 💡 1. ถ้าเจอ order_id ที่เรากำลังจัดการอยู่
 					if item["order_id"] == orderID {
-						if finalStatus == "shipping" {
-							item["status"] = "start"
-						} else if finalStatus == "delivered" {
-							item["status"] = "success"
-						}
 						hasChanges = true
-					}
 
-					// 💡 2. นับจำนวนงานที่ยัง "ไม่สำเร็จ" (เช่น ready หรือ start)
-					if st, ok := item["status"].(string); ok {
-						if st == "ready" || st == "start" {
-							remainingCount++
+						if finalStatus == "shipping" {
+							// ถ้ากำลังไปส่ง -> เปลี่ยนสถานะ และ "เก็บไว้ใน Array เหมือนเดิม"
+							item["status"] = "start"
+							updatedActiveJobs = append(updatedActiveJobs, item)
+							remainingCount++ // งานนี้ยังไม่จบ นับเอาไว้
+						} else if finalStatus == "delivered" {
+							// 🌟 จุดเปลี่ยน: ถ้าส่งสำเร็จแล้ว -> "ไม่ต้อง" append เข้าไปใน updatedActiveJobs
+							// (ข้ามไปเลย = ลบออกจาก Array) และไม่ต้องบวก remainingCount
+							continue
+						}
+					} else {
+						// 💡 2. สำหรับออเดอร์อื่นๆ ในคิว (ที่ไม่ได้กำลังอัปเดต) ให้เก็บกลับเข้า Array ตามปกติ
+						updatedActiveJobs = append(updatedActiveJobs, item)
+
+						// เช็กว่าออเดอร์อื่นนี้ยังค้างอยู่ไหม ถ้ายังค้างให้นับไว้
+						if st, ok := item["status"].(string); ok {
+							if st == "ready" || st == "start" {
+								remainingCount++
+							}
 						}
 					}
-
-					updatedActiveJobs = append(updatedActiveJobs, item)
 				}
 
-				// ถ้ามีการเปลี่ยนสถานะใน Array สำเร็จ ให้ Update กลับลงไปที่ Firestore
 				if hasChanges {
 					foundJob = true
-					_, err = docJob.Ref.Update(ctx, []firestore.Update{
-						{Path: "active_jobs", Value: updatedActiveJobs},
-						{Path: "updated_at", Value: time.Now()},
-					})
-					if err != nil {
-						return "", err
+
+					// 🌟 ถ้ายอด remainingCount เป็น 0 หรือ Array ว่างเปล่า ให้ลบ Document งานทิ้งไปเลย
+					if remainingCount == 0 || len(updatedActiveJobs) == 0 {
+						_, err = docJob.Ref.Delete(ctx)
+						if err != nil {
+							return "", err
+						}
+					} else {
+						// แต่ถ้ายังมีงานเหลืออยู่ ให้อัปเดต Array ที่ถูกตัดรายการที่เสร็จแล้วออกไป กลับลง Firestore
+						_, err = docJob.Ref.Update(ctx, []firestore.Update{
+							{Path: "active_jobs", Value: updatedActiveJobs},
+							{Path: "updated_at", Value: time.Now()},
+						})
+						if err != nil {
+							return "", err
+						}
 					}
 				}
 			}
@@ -517,7 +535,7 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		Where("status", "in", []string{"new", "preparing"}).
 		Where("CreatedAt", ">=", startOfDay).
 		Where("CreatedAt", "<", startOfTomorrow).
-		OrderBy("CreatedAt", firestore.Desc).
+		OrderBy("CreatedAt", firestore.Asc).
 		Offset(offset).
 		Limit(limit)
 
@@ -527,7 +545,7 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 	}
 
 	orders := make([]*models.Order, 0)
-	riderRefsMap := make(map[string]*firestore.DocumentRef) // 🌟 Map เก็บ Ref ของ Rider
+	riderRefsMap := make(map[string]*firestore.DocumentRef)
 
 	for _, snap := range snapshots {
 		var order models.Order
@@ -537,13 +555,22 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		order.ID = snap.Ref.ID
 		orders = append(orders, &order)
 
-		// 🌟 ถ้ารายการไหนมี RiderID ให้เก็บลง Map เพื่อเตรียมไปดึงข้อมูล
 		if order.RiderID != "" {
 			riderRefsMap[order.RiderID] = r.Client.Collection("users").Doc(order.RiderID)
 		}
 	}
 
-	// 🌟 ดึงชื่อ Rider (ถ้ามี)
+	sort.SliceStable(orders, func(i, j int) bool {
+		statusI := orders[i].Status
+		statusJ := orders[j].Status
+		if statusI == "new" && statusJ != "new" {
+			return true
+		}
+		if statusI != "new" && statusJ == "new" {
+			return false
+		}
+		return false
+	})
 	r.attachRiderNames(ctx, orders, riderRefsMap)
 
 	return orders, nil
@@ -559,7 +586,7 @@ func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, 
 		Where("status", "in", []string{"ready", "shipping", "delivered"}).
 		Where("CreatedAt", ">=", startOfDay).
 		Where("CreatedAt", "<", startOfTomorrow).
-		OrderBy("CreatedAt", firestore.Desc).
+		OrderBy("CreatedAt", firestore.Asc).
 		Offset(offset).
 		Limit(limit)
 

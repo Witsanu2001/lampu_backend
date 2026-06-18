@@ -5,6 +5,7 @@ import (
 	"jobs/repository"
 	"jobs/utils"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -107,6 +108,40 @@ func (h *JobHandler) GetHistory(c *fiber.Ctx) error {
 		"success": true,
 		"message": "success",
 		"data":    history,
+	})
+}
+
+func (h *JobHandler) GetJobSummary(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(string)
+	if !ok || userID == "" {
+		userID = c.Query("user_id")
+	}
+
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "user_id is required",
+		})
+	}
+
+	// 🌟 รับค่าวันที่จาก Query String ในรูปแบบ YYYY-MM-DD
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		// ถ้าไม่ได้ส่งมา ให้ใช้วันนี้เป็นค่าเริ่มต้น
+		dateStr = time.Now().Format("2006-01-02")
+	}
+
+	// 🌟 ส่ง userID (ซึ่งก็คือ rider_id) และ dateStr ไปให้ Repo
+	summary, err := h.repo.GetJobSummary(c.Context(), userID, dateStr)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch job summary: " + err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "success",
+		Data:    summary,
 	})
 }
 

@@ -144,3 +144,9 @@ type StoveNote struct {
 	Reason          string    `firestore:"reason" json:"reason"`
 	CreatedAt       time.Time `firestore:"created_at" json:"created_at"`
 }
+
+type JobSummaryResponse struct {
+	TotalRounds      int `json:"total_rounds"`       // นับจากจำนวนใน job_ids
+	TotalOrderSets   int `json:"total_order_sets"`   // จากฟิลด์ total_order_sets
+	TotalDeliveryFee int `json:"total_delivery_fee"` // จากฟิลด์ total_delivery_fee
+}
