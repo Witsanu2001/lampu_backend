@@ -183,6 +183,35 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	})
 }
 
+func (h *OrderHandler) GetAllOrdersByID(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 🌟 1. ดึงค่า id (User ID) จาก URL Parameter
+	userID := c.Params("id")
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "User ID is required",
+		})
+	}
+
+	// 🌟 2. ส่ง userID ไปให้ Repository ทำการคิวรี
+	orders, err := h.Repo.GetAllOrdersByID(ctx, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders: " + err.Error(),
+		})
+	}
+
+	// 3. คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์ทั้งหมดของผู้ใช้สำเร็จ",
+		Data:    orders,
+	})
+}
+
 func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
 	ctx := context.Background()
 
@@ -260,8 +289,6 @@ func (h *OrderHandler) uploadFile(ctx context.Context, file *multipart.FileHeade
 
 func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 	ctx := context.Background()
-
-	// ดึงค่า user_id จาก URL Parameter (/:user_id/orderByUser)
 	userID := c.Params("user_id")
 	if userID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
@@ -270,7 +297,6 @@ func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 		})
 	}
 
-	// เรียกใช้ฟังก์ชันจาก Repo
 	orders, err := h.Repo.GetOrdersByUserID(ctx, userID)
 	if err != nil {
 
@@ -282,7 +308,6 @@ func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 		})
 	}
 
-	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
 	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "ดึงข้อมูลออเดอร์ของผู้ใช้งานสำเร็จ",
@@ -410,6 +435,126 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		"success": true,
 		"message": responseMsg,
 		"status":  finalStatus, // ส่ง status ล่าสุดกลับไปให้หน้าบ้านเผื่อนำไปอัปเดต UI ด้วย
+	})
+}
+
+// UpdateOrderCancel จัดการการยกเลิก/ปฏิเสธออเดอร์ พร้อมรับเหตุผล
+func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. รับ Order ID จาก URL Params
+	orderID := c.Params("id")
+	if orderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Order ID is required",
+		})
+	}
+
+	// 2. สร้าง Struct สำหรับรับ Request Body (User ID และ Reason)
+	var req struct {
+		UserID string `json:"user_id" form:"user_id"`
+		Reason string `json:"reason" form:"reason"`
+	}
+
+	// Parsing Body
+	if err := c.BodyParser(&req); err != nil {
+		req.UserID = c.FormValue("user_id")
+		req.Reason = c.FormValue("reason")
+	}
+
+	// Validation
+	if req.UserID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"message": "User ID is required",
+		})
+	}
+	if req.Reason == "" {
+		req.Reason = "ไม่ได้ระบุเหตุผล" // ป้องกันกรณีไม่ได้ส่งเหตุผลมา
+	}
+
+	// 3. เรียก Repository เพื่ออัปเดตสถานะและบันทึกเหตุผลลงฐานข้อมูล
+	// 💡 หมายเหตุ: คุณจะต้องไปสร้าง/แก้ไขฟังก์ชัน CancelOrder ใน Repo ให้รับค่า reason ด้วยนะครับ
+	err := h.Repo.CancelOrder(ctx, orderID, req.Reason, req.UserID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to cancel order: " + err.Error(),
+		})
+	}
+
+	// 4. เตรียมข้อความแจ้งเตือน
+	responseMsg := "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
+
+	// นำเหตุผลมาใส่ในข้อความ LINE ด้วย
+	lineMsg := fmt.Sprintf("❌ ร้านปฏิเสธ/ยกเลิกออเดอร์\nเลขออเดอร์: %s\nเหตุผล: %s", orderID, req.Reason)
+	lampuDeliveryUID := req.UserID
+
+	// 5. ส่ง LINE Notification
+	if lineMsg != "" {
+		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
+		errLine := utils.SendOrderUserNotification(lampuDeliveryUID, lineMsg)
+		if errLine != nil {
+			log.Printf("❌ ส่ง LINE ขัดข้อง Error: %v\n", errLine)
+		} else {
+			log.Println("✅ ส่ง LINE แจ้งเตือนสำเร็จเรียบร้อย!")
+		}
+	}
+
+	// 6. ส่ง Response กลับไปให้ Frontend
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": responseMsg,
+		"status":  "refuse",
+		"reason":  req.Reason,
+	})
+}
+
+// UpdateEditSlips รับไฟล์สลิปใหม่และอัปเดตข้อมูล
+func (h *OrderHandler) UpdateEditSlips(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. รับ Order ID จาก Params
+	orderID := c.Params("order_id")
+	if orderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Order ID is required",
+		})
+	}
+
+	// 2. รับไฟล์รูปภาพที่ส่งมาจากหน้าบ้าน
+	slipFile, err := c.FormFile("slip")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "กรุณาอัปโหลดไฟล์สลิป (slip is required)",
+		})
+	}
+
+	// 3. นำไฟล์ไปอัปโหลดขึ้น Firebase Storage (ใช้ฟังก์ชัน uploadFile เดิมที่คุณมีอยู่แล้ว)
+	newSlipURL, err := h.uploadFile(ctx, slipFile, "slips")
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to upload new slip: " + err.Error(),
+		})
+	}
+
+	// 4. เรียก Repo เพื่ออัปเดตข้อมูลลงฐานข้อมูล
+	err = h.Repo.UpdateSlip(ctx, orderID, newSlipURL)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to update order with new slip: " + err.Error(),
+		})
+	}
+
+	// 5. ส่ง Response กลับ
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "อัปโหลดสลิปใหม่สำเร็จ",
 	})
 }
 

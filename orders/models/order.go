@@ -12,12 +12,15 @@ type Order struct {
 	Payment      Payment     `json:"payment" firestore:"payment"`
 	Totals       Totals      `json:"totals" firestore:"totals"`
 	SlipURL      string      `json:"slip_url" firestore:"slip_url"`
+	OldSlipURL   string      `json:"old_slip_url" firestore:"old_slip_url"`
 	HomeImageURL string      `json:"home_image_url" firestore:"home_image_url"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
 	Status       string      `json:"status" firestore:"status"`
 	RiderID      string      `json:"rider_id" firestore:"rider_id"`
 	RiderName    UserProfile `json:"rider_name" firestore:"rider_name"`
+	CancelReason string      `json:"cancel_reason" firestore:"cancel_reason"`
+	IsEditedSlip bool        `json:"is_edited_slip" firestore:"is_edited_slip"`
 }
 
 type Item struct {

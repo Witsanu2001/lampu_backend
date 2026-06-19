@@ -147,17 +147,17 @@ func main() {
 
 	ordersApi.Post("/orders_add", orderHandler.CreateOrder)
 	ordersApi.Get("/orders_get", orderHandler.GetAllOrders)
-
+	ordersApi.Get("/orders_get/:id/history", orderHandler.GetAllOrdersByID)
+	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
 	ordersApi.Get("/orders_get/success", orderHandler.GetSuccessOrders)
-
 	ordersApi.Get("/orders_new", orderHandler.GetNewOrders)
 	ordersApi.Get("/orders_delivery", orderHandler.GetDeliveryOrders)
-
-	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
 	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
 	ordersApi.Post("/bulk_assign", orderHandler.BulkAssignJobs)
-
 	ordersApi.Put("/orders_put/:id/status", orderHandler.UpdateOrderStatus)
+	ordersApi.Put("/orders_put/:id/cancel", orderHandler.UpdateOrderCancel)
+
+	ordersApi.Put("/orders_put/:order_id/edit_slip", orderHandler.UpdateEditSlips)
 
 	app.Post("/api/test-line", func(c *fiber.Ctx) error {
 		type TestPayload struct {
@@ -190,5 +190,8 @@ func main() {
 		port = "8082"
 	}
 	log.Printf("Service is running on port %s", port)
-	app.Listen(":" + port)
+	// ดักจับ Error หาก Start Server ไม่สำเร็จ
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
 }

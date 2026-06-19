@@ -103,5 +103,8 @@ func main() {
 		port = "8083"
 	}
 	log.Printf("Service is running on port %s", port)
-	app.Listen(":" + port)
+	// ดักจับ Error หาก Start Server ไม่สำเร็จ
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
 }

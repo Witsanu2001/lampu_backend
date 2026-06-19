@@ -86,6 +86,62 @@ func (r *OrderRepository) GetAllOrders(ctx context.Context) ([]*models.Order, er
 	return orders, nil
 }
 
+func (r *OrderRepository) GetAllOrdersByID(ctx context.Context, userID string) ([]map[string]interface{}, error) {
+	snapshots, err := r.Client.Collection("orders").
+		Where("user_id", "==", userID).
+		OrderBy("CreatedAt", firestore.Desc).
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	var response []map[string]interface{}
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+		order.ID = snap.Ref.ID
+		var mappedMainItems []map[string]interface{}
+		for _, item := range order.MainItems {
+			mappedMainItems = append(mappedMainItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
+		}
+
+		mappedOrder := map[string]interface{}{
+			"id":        order.ID,
+			"user_id":   order.UserID,
+			"mainItems": mappedMainItems,
+			"shipping": map[string]interface{}{
+				"recipient": order.Shipping.Recipient,
+				"phone":     order.Shipping.Phone,
+				"address":   order.Shipping.Address,
+			},
+			"payment": map[string]interface{}{
+				"method": order.Payment.Method,
+			},
+			"totals": map[string]interface{}{
+				"grandTotal": order.Totals.GrandTotal,
+			},
+			"status":     order.Status,
+			"created_at": order.CreatedAt,
+			"updated_at": order.UpdatedAt,
+		}
+
+		if order.Status == "refuse" {
+			mappedOrder["cancel_reason"] = order.CancelReason
+		}
+
+		response = append(response, mappedOrder)
+	}
+
+	return response, nil
+}
+
 // 🌟 เปลี่ยน Return type เป็น []models.SuccessOrderSummary
 func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.Time) ([]models.SuccessOrderSummary, error) {
 	// 1. คำนวณหาเวลาเริ่มต้นของวันที่ระบุ (00:00:00) และวันถัดไป
@@ -133,8 +189,7 @@ func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.
 	return ordersSummary, nil
 }
 
-func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) ([]*models.Order, error) {
-	// กรองหาออเดอร์ที่มี user_id ตรงกับที่ส่งมา และเรียงตามเวลาที่สร้าง
+func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) ([]map[string]interface{}, error) {
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).
 		OrderBy("CreatedAt", firestore.Desc).
@@ -145,35 +200,54 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 		return nil, err
 	}
 
-	orders := make([]*models.Order, 0)
-	riderRefsMap := make(map[string]*firestore.DocumentRef)
-
+	var response []map[string]interface{}
 	for _, snap := range snapshots {
 		var order models.Order
 		if err := snap.DataTo(&order); err != nil {
 			return nil, err
 		}
-
 		order.ID = snap.Ref.ID
-
-		// 🎯 ✨ เพิ่มเงื่อนไขแปลงสถานะตรงนี้:
-		// ถ้าสถานะเป็น pending หรือ success ให้เปลี่ยนเป็น delivered ก่อนส่งออกไป
-		if order.Status == "pending" || order.Status == "success" {
-			order.Status = "delivered"
+		var mappedMainItems []map[string]interface{}
+		for _, item := range order.MainItems {
+			mappedMainItems = append(mappedMainItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
 		}
 
-		orders = append(orders, &order)
-
-		// ถ้ารายการไหนมีการมอบหมาย RiderID ไว้แล้ว ให้เก็บลง Map เพื่อเตรียมไปดึงข้อมูล
-		if order.RiderID != "" {
-			riderRefsMap[order.RiderID] = r.Client.Collection("users").Doc(order.RiderID)
+		mappedOrder := map[string]interface{}{
+			"id":        order.ID,
+			"user_id":   order.UserID,
+			"mainItems": mappedMainItems,
+			"shipping": map[string]interface{}{
+				"recipient": order.Shipping.Recipient,
+				"phone":     order.Shipping.Phone,
+				"address":   order.Shipping.Address,
+			},
+			"payment": map[string]interface{}{
+				"method": order.Payment.Method,
+			},
+			"totals": map[string]interface{}{
+				"grandTotal": order.Totals.GrandTotal,
+			},
+			"equipment": map[string]interface{}{
+				"needEquipment": order.Equipment.NeedEquipment,
+				"stoveCount":    order.Equipment.StoveCount,
+				"panCount":      order.Equipment.PanCount,
+			},
+			"status":     order.Status,
+			"created_at": order.CreatedAt,
+			"updated_at": order.UpdatedAt,
 		}
+
+		if order.Status == "refuse" {
+			mappedOrder["cancel_reason"] = order.CancelReason
+		}
+
+		response = append(response, mappedOrder)
 	}
 
-	// เรียกใช้ฟังก์ชันตัวช่วยเพื่อประกอบร่างชื่อไรเดอร์
-	r.attachRiderNames(ctx, orders, riderRefsMap)
-
-	return orders, nil
+	return response, nil
 }
 
 func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*models.Order, error) {
@@ -401,6 +475,68 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 	return finalStatus, nil
 }
 
+func (r *OrderRepository) CancelOrder(ctx context.Context, orderID string, reason string, userID string) error {
+
+	// 1. เตรียมข้อมูลที่จะอัปเดตลงตาราง orders (Firestore)
+	var updates []firestore.Update
+	updates = append(updates, firestore.Update{Path: "status", Value: "refuse"})
+	updates = append(updates, firestore.Update{Path: "cancel_reason", Value: reason}) // เพิ่มฟิลด์เหตุผล
+	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
+	updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
+
+	// 2. อัปเดตข้อมูลตาราง orders ลง Firestore
+	_, err := r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
+	if err != nil {
+		return err // ถ้าไม่เจอ order หรืออัปเดตพลาด จะ return error กลับไป
+	}
+
+	// 3. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) สำหรับแอปฝั่งลูกค้า
+	// เพื่อให้หน้าแอปของลูกค้าขึ้นว่า "ร้านปฏิเสธ" ได้ทันทีโดยไม่ต้องรีเฟรชหน้าจอ
+	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
+	_ = refLiveOrder.Update(ctx, map[string]interface{}{
+		"status":        "refuse",
+		"cancel_reason": reason,
+		"updated_at":    time.Now().Unix(),
+	})
+
+	return nil
+}
+
+func (r *OrderRepository) UpdateSlip(ctx context.Context, orderID string, newSlipURL string) error {
+	docSnap, err := r.Client.Collection("orders").Doc(orderID).Get(ctx)
+	if err != nil {
+		return err
+	}
+
+	var order models.Order
+	if err := docSnap.DataTo(&order); err != nil {
+		return err
+	}
+
+	// 🌟 2. เตรียมข้อมูลที่จะอัปเดต
+	var updates []firestore.Update
+	updates = append(updates, firestore.Update{Path: "slip_url", Value: newSlipURL})
+	updates = append(updates, firestore.Update{Path: "old_slip_url", Value: order.SlipURL}) // ✨ ย้ายสลิปเดิมมาเก็บฟิลด์นี้
+	updates = append(updates, firestore.Update{Path: "status", Value: "edit"})
+	updates = append(updates, firestore.Update{Path: "is_edited_slip", Value: true})
+	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
+
+	// 3. อัปเดตข้อมูลลง Firestore
+	_, err = r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
+	if err != nil {
+		return err
+	}
+
+	// 4. อัปเดตสถานะลง Realtime Database (RTDB) สำหรับลูกค้า
+	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
+	_ = refLiveOrder.Update(ctx, map[string]interface{}{
+		"status":     "edit",
+		"updated_at": time.Now().Unix(),
+	})
+
+	return nil
+}
+
 func (r *OrderRepository) GetTodayOrderCount(ctx context.Context, startOfDay time.Time, endOfDay time.Time) (int64, error) {
 	// 🚨 ตรง Where ให้ใช้ชื่อ Field ให้ตรงกับใน Database (จากโค้ดเดิมเห็นใน Repo คุณใช้ "CreatedAt")
 	query := r.Client.Collection("orders").
@@ -525,14 +661,15 @@ func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jo
 	return nil
 }
 
-func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
+// 🌟 เปลี่ยน Return type เป็น []map[string]interface{} เพื่อคุมฟิลด์ที่จะส่งกลับเอง
+func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page int, limit int) ([]map[string]interface{}, error) {
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
 	offset := (page - 1) * limit
 
 	query := r.Client.Collection("orders").
-		Where("status", "in", []string{"new", "preparing"}).
+		Where("status", "in", []string{"new", "preparing", "refuse", "edit"}).
 		Where("CreatedAt", ">=", startOfDay).
 		Where("CreatedAt", "<", startOfTomorrow).
 		OrderBy("CreatedAt", firestore.Asc).
@@ -571,9 +708,52 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		}
 		return false
 	})
+
+	// นำ orders ไปประมวลผลหารายชื่อ Rider ตามปกติ
 	r.attachRiderNames(ctx, orders, riderRefsMap)
 
-	return orders, nil
+	// 🌟 กำหนดฟิลด์ที่จะส่งไปให้หน้าบ้านตรงนี้เลย!
+	var response []map[string]interface{}
+
+	for _, order := range orders {
+
+		var mappedMainItems []map[string]interface{}
+		for _, item := range order.MainItems {
+			mappedMainItems = append(mappedMainItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
+		}
+
+		mappedOrder := map[string]interface{}{
+			"id":        order.ID,
+			"user_id":   order.UserID,
+			"mainItems": mappedMainItems,
+			"shipping": map[string]interface{}{
+				"recipient": order.Shipping.Recipient,
+				"phone":     order.Shipping.Phone,
+				"address":   order.Shipping.Address,
+			},
+			"payment": map[string]interface{}{
+				"method": order.Payment.Method,
+			},
+			"totals": map[string]interface{}{
+				"grandTotal": order.Totals.GrandTotal,
+			},
+			"status":     order.Status,
+			"created_at": order.CreatedAt,
+			"updated_at": order.UpdatedAt,
+		}
+
+		//ตั้งเงื่อนไข ถ้า status เป็น refuse ค่อยเพิ่ม key "cancel_reason" เข้าไปใน Map
+		if order.Status == "refuse" {
+			mappedOrder["cancel_reason"] = order.CancelReason
+		}
+
+		response = append(response, mappedOrder)
+	}
+
+	return response, nil
 }
 
 func (r *OrderRepository) GetDeliveryOrders(ctx context.Context, userID string, page int, limit int) ([]*models.Order, error) {
