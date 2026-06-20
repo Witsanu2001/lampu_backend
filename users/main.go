@@ -2,21 +2,72 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"users/handlers"
 	"users/repository"
 
-	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/auth"
 	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
 )
 
-// Test CI/CD trigger
+// 🌟 1. แปลง Middleware ให้รองรับ net/http (ไม่ต้องใช้ Fiber แล้ว)
+func AuthMiddleware(appFirebase *firebase.App, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 
-func initFirestore() *firestore.Client {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Missing token"})
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		ctx := r.Context()
+
+		authClient, err := appFirebase.Auth(ctx)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Auth client error"})
+			return
+		}
+
+		// 🌟 เปลี่ยนมาใช้ VerifyIDTokenAndCheckRevoked
+		tokenInfo, err := authClient.VerifyIDTokenAndCheckRevoked(ctx, token)
+		if err != nil {
+			// 🌟 เช็คว่า Error เกิดจากการที่ Token โดนสั่งยกเลิก (Revoke) ใช่หรือไม่
+			if auth.IsIDTokenRevoked(err) {
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "บัญชีของคุณถูกระงับการใช้งาน หรือโดนบังคับให้ออกจากระบบ"})
+				return
+			}
+
+			// ถ้าเป็น Error อื่นๆ (เช่น หมดอายุ 1 ชม. หรือ Token ผิดปกติ)
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "เซสชั่นหมดอายุ กรุณาล็อกอินใหม่"})
+			return
+		}
+
+		// ตรวจสอบ Custom Claims เสริม (กรณี Token เพิ่งสร้างใหม่แต่ดึงค่าบล็อคมาด้วย)
+		if isBlocked, ok := tokenInfo.Claims["is_blocked"].(bool); ok && isBlocked {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "บัญชีของคุณถูกระงับการใช้งาน"})
+			return
+		}
+
+		ctx = context.WithValue(ctx, "user_id", tokenInfo.UID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// 🌟 2. แก้ไขเป็น initFirebase เพื่อคืนค่าตัว App หลักกลับมา
+func initFirebase() *firebase.App {
 	ctx := context.Background()
 	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 	var app *firebase.App
@@ -32,12 +83,7 @@ func initFirestore() *firestore.Client {
 		log.Fatalf("error initializing app: %v", err)
 	}
 
-	client, err := app.Firestore(ctx)
-	if err != nil {
-		log.Fatalf("error initializing firestore: %v", err)
-	}
-	log.Println("Firestore connected successfully")
-	return client
+	return app
 }
 
 func main() {
@@ -45,27 +91,47 @@ func main() {
 		log.Println("No ../.env file found. Using system environment variables.")
 	}
 
-	firestoreClient := initFirestore()
+	// 🌟 3. ประกาศ ctx และเรียกใช้แอป Firebase ทีเดียว
+	ctx := context.Background()
+	appFirebase := initFirebase()
+
+	// แตกออกมาเป็น Firestore Client
+	firestoreClient, err := appFirebase.Firestore(ctx)
+	if err != nil {
+		log.Fatalf("error initializing firestore: %v", err)
+	}
 	defer firestoreClient.Close()
+	log.Println("Firestore connected successfully")
 
-	// 🌟 1. สร้าง Repository ทั้งสองตัว
+	// แตกออกมาเป็น Auth Client
+	authClient, err := appFirebase.Auth(ctx)
+	if err != nil {
+		log.Fatalf("error getting auth client: %v\n", err)
+	}
+
+	// สร้าง Repository
 	userRepo := repository.NewUserRepository(firestoreClient)
-	locationRepo := repository.NewLocationRepository(firestoreClient) // เพิ่มบรรทัดนี้
+	locationRepo := repository.NewLocationRepository(firestoreClient)
 
-	// 🌟 2. สร้าง Handler ทั้งสองตัว
-	userHandler := handlers.NewUserHandler(userRepo)
-	locationHandler := handlers.NewLocationHandler(locationRepo) // เพิ่มบรรทัดนี้
+	// สร้าง Handler
+	userHandler := handlers.NewUserHandler(userRepo, authClient)
+	locationHandler := handlers.NewLocationHandler(locationRepo)
 
-	// 3. กำหนด Route ให้ User
-	http.HandleFunc("/api/users/sync", userHandler.SyncUserHandler)
-	http.HandleFunc("/api/users/all", userHandler.GetAllUsersHandler)
-	http.HandleFunc("/api/users/get_rider", userHandler.GetRiderHandler)
+	// 🌟 4. กำหนด Route โดยเอา AuthMiddleware มาครอบฟังก์ชัน (ถ้าอันไหนไม่ต้องการเช็ค Token ให้เอา AuthMiddleware() ออกได้เลย)
+	http.HandleFunc("/api/users/sync", AuthMiddleware(appFirebase, userHandler.SyncUserHandler))
+	http.HandleFunc("/api/users/all", AuthMiddleware(appFirebase, userHandler.GetAllUsersHandler))
+	http.HandleFunc("/api/users/get_rider", AuthMiddleware(appFirebase, userHandler.GetRiderHandler))
 
-	// 🌟 4. กำหนด Route ให้ Location (เรียกผ่าน locationHandler)
-	http.HandleFunc("/api/users/location_add", locationHandler.SaveLocationHandler)
-	http.HandleFunc("/api/users/location_get", locationHandler.GetLocationsHandler)
-	http.HandleFunc("/api/users/location_update", locationHandler.UpdateLocationHandler)
-	http.HandleFunc("/api/users/location_delete", locationHandler.DeleteLocationHandler)
+	http.HandleFunc("/api/users/all/edit", AuthMiddleware(appFirebase, userHandler.EditUsersHandler))
+	http.HandleFunc("/api/users/all/delete", AuthMiddleware(appFirebase, userHandler.DeleteUsersHandler))
+	http.HandleFunc("/api/users/all/block", AuthMiddleware(appFirebase, userHandler.BlockUsersHandler))
+	http.HandleFunc("/api/users/all/unblock", AuthMiddleware(appFirebase, userHandler.UnblockUsersHandler))
+
+	// ส่วนของ Location
+	http.HandleFunc("/api/users/location_add", AuthMiddleware(appFirebase, locationHandler.SaveLocationHandler))
+	http.HandleFunc("/api/users/location_get", AuthMiddleware(appFirebase, locationHandler.GetLocationsHandler))
+	http.HandleFunc("/api/users/location_update", AuthMiddleware(appFirebase, locationHandler.UpdateLocationHandler))
+	http.HandleFunc("/api/users/location_delete", AuthMiddleware(appFirebase, locationHandler.DeleteLocationHandler))
 
 	port := os.Getenv("PORT")
 	if port == "" {

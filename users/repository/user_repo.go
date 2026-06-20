@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 	"users/models"
 
 	"cloud.google.com/go/firestore"
+	"firebase.google.com/go/v4/auth"
 	"google.golang.org/api/iterator"
 )
 
@@ -19,40 +21,6 @@ func NewUserRepository(client *firestore.Client) *UserRepository {
 	return &UserRepository{client: client}
 }
 
-// บันทึก หรือ อัปเดตข้อมูลผู้ใช้ลง Firestore
-func (r *UserRepository) Save(ctx context.Context, user models.UserProfile) error {
-	_, err := r.client.Collection("users").Doc(user.UID).Set(ctx, user)
-	return err
-}
-
-// 🌟 ดึงรายชื่อผู้ใช้ทั้งหมดจากคอลเลกชัน "users"
-func (r *UserRepository) GetAll(ctx context.Context) ([]models.UserProfile, error) {
-	var users []models.UserProfile
-
-	// ดึงเอกสารทั้งหมดในคอลเลกชัน users
-	iter := r.client.Collection("users").Documents(ctx)
-	defer iter.Stop()
-
-	for {
-		doc, err := iter.Next()
-		if err == iterator.Done {
-			break // อ่านครบทุกด็อคคิวเมนต์แล้ว ให้จบลูป
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		var user models.UserProfile
-		// แปลงข้อมูลจาก Firestore เข้าสู่โครงสร้างตัวแปร Go
-		if err := doc.DataTo(&user); err != nil {
-			return nil, err
-		}
-		users = append(users, user)
-	}
-
-	return users, nil
-}
-
 func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserProfile, error) {
 	doc, err := r.client.Collection("users").Doc(uid).Get(ctx)
 	if err != nil {
@@ -63,6 +31,96 @@ func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserP
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *UserRepository) Save(ctx context.Context, user models.UserProfile) error {
+	_, err := r.client.Collection("users").Doc(user.UID).Set(ctx, user)
+	return err
+}
+func (r *UserRepository) GetAll(ctx context.Context) ([]models.UserProfile, error) {
+	var users []models.UserProfile
+	iter := r.client.Collection("users").Documents(ctx)
+	defer iter.Stop()
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var user models.UserProfile
+		if err := doc.DataTo(&user); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+func (r *UserRepository) UpdateUser(ctx context.Context, uid string, newRole string) error {
+	_, err := r.client.Collection("users").Doc(uid).Update(ctx, []firestore.Update{
+		{Path: "role", Value: newRole},
+	})
+	return err
+}
+
+func (r *UserRepository) DeleteUser(ctx context.Context, uid string) error {
+	_, err := r.client.Collection("users").Doc(uid).Delete(ctx)
+	return err
+}
+
+func (r *UserRepository) BlockUser(ctx context.Context, authClient *auth.Client, uid string) error {
+	// 1. อัปเดตใน Firestore (เหมือนเดิม)
+	_, err := r.client.Collection("users").Doc(uid).Update(ctx, []firestore.Update{
+		{Path: "is_blocked", Value: true},
+	})
+	if err != nil {
+		return err
+	}
+
+	// 2. 🌟 ยัดค่า is_blocked: true ลงใน Token (Custom Claims)
+	claims := map[string]interface{}{
+		"is_blocked": true,
+	}
+	err = authClient.SetCustomUserClaims(ctx, uid, claims)
+	if err != nil {
+		log.Printf("Failed to set custom claims: %v", err)
+	}
+
+	// 3. 🌟 สั่งยกเลิก Token เก่าทั้งหมด (บังคับให้หลุดจากระบบทันที)
+	err = authClient.RevokeRefreshTokens(ctx, uid)
+	if err != nil {
+		log.Printf("Failed to revoke refresh tokens: %v", err)
+	}
+
+	return nil
+}
+
+// -----------------------------------------
+// ส่วนฟังก์ชันปลดบล็อค (Unblock)
+func (r *UserRepository) UnblockUser(ctx context.Context, authClient *auth.Client, uid string) error {
+	// 1. อัปเดตใน Firestore
+	_, err := r.client.Collection("users").Doc(uid).Update(ctx, []firestore.Update{
+		{Path: "is_blocked", Value: false},
+	})
+	if err != nil {
+		return err
+	}
+
+	// 2. 🌟 เคลียร์ Custom Claims (เอา is_blocked ออก หรือเซ็ตเป็น false)
+	claims := map[string]interface{}{
+		"is_blocked": false,
+	}
+	err = authClient.SetCustomUserClaims(ctx, uid, claims)
+	if err != nil {
+		log.Printf("Failed to remove custom claims: %v", err)
+	}
+
+	return nil
 }
 
 func (r *UserRepository) GetRiders(ctx context.Context) ([]models.RiderWithJobsResponse, error) {

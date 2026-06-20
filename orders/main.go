@@ -145,11 +145,11 @@ func main() {
 	}
 	orderHandler := handlers.NewOrderHandler(orderRepo, bucket, bucketName)
 
+	ordersApi.Get("/orders_get/success", orderHandler.GetSuccessOrders)
 	ordersApi.Post("/orders_add", orderHandler.CreateOrder)
 	ordersApi.Get("/orders_get", orderHandler.GetAllOrders)
 	ordersApi.Get("/orders_get/:id/history", orderHandler.GetAllOrdersByID)
 	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
-	ordersApi.Get("/orders_get/success", orderHandler.GetSuccessOrders)
 	ordersApi.Get("/orders_new", orderHandler.GetNewOrders)
 	ordersApi.Get("/orders_delivery", orderHandler.GetDeliveryOrders)
 	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)

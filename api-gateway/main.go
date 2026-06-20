@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/auth"
 	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
 )
@@ -70,14 +71,41 @@ func authMiddleware(app *firebase.App, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		token, err := client.VerifyIDToken(context.Background(), idToken)
+		// 🌟 1. ใช้ VerifyIDTokenAndCheckRevoked เพื่อเช็คว่า Token โดนเตะ (Revoke) หรือยัง
+		token, err := client.VerifyIDTokenAndCheckRevoked(context.Background(), idToken)
 		if err != nil {
+			// 🌟 2. ถ้า Error เพราะโดน Revoke ให้ตอบกลับเป็น 403 Forbidden ทันที
+			if auth.IsIDTokenRevoked(err) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "บัญชีของคุณถูกระงับการใช้งาน หรือโดนบังคับให้ออกจากระบบ",
+				})
+				return
+			}
+
 			log.Printf("Token verification failed: %v", err)
 			http.Error(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
 
+		// 🌟 3. ตรวจสอบ Custom Claims เสริม (กรณี Token เพิ่งสร้างใหม่แต่ดึงค่าบล็อคมาด้วย)
+		if isBlocked, ok := token.Claims["is_blocked"].(bool); ok && isBlocked {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "บัญชีของคุณถูกระงับการใช้งาน",
+			})
+			return
+		}
+
 		log.Printf("Verified user: %s\n", token.UID)
+
+		// (Optional) แนบ UID ไปใน Header ให้ Service ด้านหลังนำไปใช้งานต่อได้ง่ายๆ
+		r.Header.Set("X-User-Id", token.UID)
+
 		next.ServeHTTP(w, r)
 	}
 }
@@ -206,7 +234,12 @@ func main() {
 	}))
 
 	router.HandleFunc("/api/jobs/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Forwarding request to Jobs Service: %s", r.URL.Path)
+		log.Printf("Forwarding request to Job Service: %s", r.URL.Path)
+		jobProxy.ServeHTTP(w, r)
+	}))
+
+	router.HandleFunc("/api/systems/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Forwarding request to System Service: %s", r.URL.Path)
 		jobProxy.ServeHTTP(w, r)
 	}))
 

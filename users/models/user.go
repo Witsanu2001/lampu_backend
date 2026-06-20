@@ -10,6 +10,7 @@ type UserProfile struct {
 	Provider    string    `json:"provider"`
 	LastLogin   time.Time `json:"lastLogin"`
 	Role        string    `json:"role"`
+	IsBlocked   bool      `json:"is_blocked" firestore:"is_blocked"`
 }
 
 type JobsEvent struct {
@@ -24,6 +25,11 @@ type JobsEvent struct {
 type RiderWithJobsResponse struct {
 	UserProfile
 	JobsEvent *JobsEvent `json:"jobs_event"`
+}
+
+type UserActionRequest struct {
+	UID  string `json:"uid"`
+	Role string `json:"role,omitempty"` // ใช้ตอนเปลี่ยน Role
 }
 
 // type RiderWithJobsResponse struct {
