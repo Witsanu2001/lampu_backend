@@ -9,16 +9,29 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"firebase.google.com/go/v4/auth"
+	"firebase.google.com/go/v4/db"
 	"google.golang.org/api/iterator"
 )
 
 type UserRepository struct {
-	client *firestore.Client
+	client     *firestore.Client
+	rtdbClient *db.Client
 }
 
-// ฟังก์ชันสร้าง Repository instance ใหม่
-func NewUserRepository(client *firestore.Client) *UserRepository {
-	return &UserRepository{client: client}
+func NewUserRepository(client *firestore.Client, rtdbClient *db.Client) *UserRepository {
+	return &UserRepository{client: client, rtdbClient: rtdbClient}
+}
+
+func (r *UserRepository) SyncUserToRTDB(ctx context.Context, uid string) error {
+	// ดึงข้อมูลล่าสุดจาก Firestore
+	user, err := r.GetByID(ctx, uid)
+	if err != nil {
+		return err
+	}
+
+	// เขียนลง RTDB ที่ path: live_users/{uid}
+	ref := r.rtdbClient.NewRef("live_users/" + uid)
+	return ref.Set(ctx, user)
 }
 
 func (r *UserRepository) GetByID(ctx context.Context, uid string) (*models.UserProfile, error) {
@@ -74,7 +87,7 @@ func (r *UserRepository) DeleteUser(ctx context.Context, uid string) error {
 }
 
 func (r *UserRepository) BlockUser(ctx context.Context, authClient *auth.Client, uid string) error {
-	// 1. อัปเดตใน Firestore (เหมือนเดิม)
+	// 1. อัปเดตใน Firestore
 	_, err := r.client.Collection("users").Doc(uid).Update(ctx, []firestore.Update{
 		{Path: "is_blocked", Value: true},
 	})
@@ -82,19 +95,22 @@ func (r *UserRepository) BlockUser(ctx context.Context, authClient *auth.Client,
 		return err
 	}
 
-	// 2. 🌟 ยัดค่า is_blocked: true ลงใน Token (Custom Claims)
+	// 2. อัปเดต Custom Claims
 	claims := map[string]interface{}{
 		"is_blocked": true,
 	}
-	err = authClient.SetCustomUserClaims(ctx, uid, claims)
-	if err != nil {
+	if err := authClient.SetCustomUserClaims(ctx, uid, claims); err != nil {
 		log.Printf("Failed to set custom claims: %v", err)
 	}
 
-	// 3. 🌟 สั่งยกเลิก Token เก่าทั้งหมด (บังคับให้หลุดจากระบบทันที)
-	err = authClient.RevokeRefreshTokens(ctx, uid)
-	if err != nil {
+	// 3. สั่งยกเลิก Token
+	if err := authClient.RevokeRefreshTokens(ctx, uid); err != nil {
 		log.Printf("Failed to revoke refresh tokens: %v", err)
+	}
+
+	// 🌟 4. ซิงค์ข้อมูลล่าสุดลง RTDB (live_users/{uid}) เพื่อให้หน้าบ้านรับรู้ทันที
+	if err := r.SyncUserToRTDB(ctx, uid); err != nil {
+		log.Printf("Failed to sync blocked status to RTDB: %v", err)
 	}
 
 	return nil
@@ -111,13 +127,17 @@ func (r *UserRepository) UnblockUser(ctx context.Context, authClient *auth.Clien
 		return err
 	}
 
-	// 2. 🌟 เคลียร์ Custom Claims (เอา is_blocked ออก หรือเซ็ตเป็น false)
+	// 2. เคลียร์ Custom Claims
 	claims := map[string]interface{}{
 		"is_blocked": false,
 	}
-	err = authClient.SetCustomUserClaims(ctx, uid, claims)
-	if err != nil {
+	if err := authClient.SetCustomUserClaims(ctx, uid, claims); err != nil {
 		log.Printf("Failed to remove custom claims: %v", err)
+	}
+
+	// 🌟 3. ซิงค์ข้อมูลล่าสุดลง RTDB (live_users/{uid}) เพื่อปลดล็อกการมองเห็น
+	if err := r.SyncUserToRTDB(ctx, uid); err != nil {
+		log.Printf("Failed to sync unblocked status to RTDB: %v", err)
 	}
 
 	return nil

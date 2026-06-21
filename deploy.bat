@@ -22,9 +22,9 @@ call gcloud run deploy job-service --source . --region asia-southeast1 --allow-u
 cd ..
 
 echo.
-echo [4/5] Deploying Job Service...
-cd jobs
-call gcloud run deploy job-service --source . --region asia-southeast1 --allow-unauthenticated
+echo [4/5] Deploying System Service...
+cd Systems
+call gcloud run deploy System-service --source . --region asia-southeast1 --allow-unauthenticated
 cd ..
 
 echo.

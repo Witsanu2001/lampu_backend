@@ -212,9 +212,15 @@ func main() {
 		log.Fatal("Error: JOBS_SERVICE_URL is not set!")
 	}
 
+	systemServiceURL := os.Getenv("SYSTEMS_SERVICE_URL")
+	if systemServiceURL == "" {
+		log.Fatal("Error: SYSTEMS_SERVICE_URL is not set!")
+	}
+
 	userProxy := createProxy(userServiceURL)
 	orderProxy := createProxy(ordersServiceURL)
 	jobProxy := createProxy(jobsServiceURL)
+	systemProxy := createProxy(systemServiceURL)
 	router := http.NewServeMux()
 
 	router.HandleFunc("/api/auth/line", corsMiddleware(lineLoginHandler(app)))
@@ -240,7 +246,7 @@ func main() {
 
 	router.HandleFunc("/api/systems/", authMiddleware(app, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Forwarding request to System Service: %s", r.URL.Path)
-		jobProxy.ServeHTTP(w, r)
+		systemProxy.ServeHTTP(w, r)
 	}))
 
 	port := os.Getenv("PORT")

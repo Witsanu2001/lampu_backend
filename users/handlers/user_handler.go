@@ -29,7 +29,28 @@ func NewUserHandler(repo *repository.UserRepository, authClient *auth.Client) *U
 	}
 }
 
-// 🌟 2. ฟังก์ชันตัวช่วยสำหรับส่ง JSON ออกไป (ลดการเขียนโค้ดซ้ำซาก)
+func (h *UserHandler) SyncUserToRTDBHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		sendJSONResponse(w, http.StatusBadRequest, false, "Missing 'user_id' parameter", nil)
+		return
+	}
+
+	// สั่ง Sync ข้อมูลจาก Firestore ลง RTDB
+	err := h.repo.SyncUserToRTDB(r.Context(), userID)
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, false, "Failed to sync user to RTDB", nil)
+		return
+	}
+
+	sendJSONResponse(w, http.StatusOK, true, "User synced to RTDB successfully", nil)
+}
+
 func sendJSONResponse(w http.ResponseWriter, statusCode int, success bool, message string, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

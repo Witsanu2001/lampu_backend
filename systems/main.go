@@ -58,7 +58,7 @@ func main() {
 	defer firestoreClient.Close()
 
 	// 2. Initialize Realtime Database
-	_, err = appFirebase.Database(ctx)
+	rtdbClient, err := appFirebase.Database(ctx)
 	if err != nil {
 		log.Fatalf("error initializing realtime database: %v\n", err)
 	}
@@ -68,15 +68,16 @@ func main() {
 
 	SystemsApi := app.Group("/api/systems")
 
-	SystemRepo := repository.NewSystemRepository(firestoreClient)
-	jobHandler := handlers.NewSystemHandler(SystemRepo)
+	sysRepo := repository.NewSystemRepository(firestoreClient, rtdbClient)
+	sysHandler := handlers.NewSystemHandler(sysRepo)
 
-	SystemsApi.Get("/systems", jobHandler.GetSystem)
+	SystemsApi.Get("/systems", sysHandler.GetSystem)
+	SystemsApi.Post("/systems_add", sysHandler.AddSystem)
 
 	SystemsApi.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
-			"message": "Jobs service is running smoothly 🛵",
+			"message": "Systems service is running smoothly 🛵",
 		})
 	})
 

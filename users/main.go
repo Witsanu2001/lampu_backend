@@ -66,23 +66,31 @@ func AuthMiddleware(appFirebase *firebase.App, next http.HandlerFunc) http.Handl
 	}
 }
 
-// 🌟 2. แก้ไขเป็น initFirebase เพื่อคืนค่าตัว App หลักกลับมา
 func initFirebase() *firebase.App {
 	ctx := context.Background()
 	credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+	config := &firebase.Config{
+		ProjectID:     "lampu-5a178",
+		StorageBucket: "lampu-5a178.firebasestorage.app",
+		DatabaseURL:   "https://lampu-5a178-default-rtdb.asia-southeast1.firebasedatabase.app",
+	}
+
 	var app *firebase.App
 	var err error
 
 	if credentialsFile != "" {
 		opt := option.WithCredentialsFile(credentialsFile)
-		app, err = firebase.NewApp(ctx, nil, opt)
+		app, err = firebase.NewApp(ctx, config, opt)
+		log.Println("Initialized Firebase with local Service Account Key")
 	} else {
-		app, err = firebase.NewApp(ctx, nil)
-	}
-	if err != nil {
-		log.Fatalf("error initializing app: %v", err)
+		app, err = firebase.NewApp(ctx, config)
+		log.Println("Initialized Firebase with Cloud Run default credentials")
 	}
 
+	if err != nil {
+		log.Fatalf("error initializing app: %v\n", err)
+	}
 	return app
 }
 
@@ -109,15 +117,21 @@ func main() {
 		log.Fatalf("error getting auth client: %v\n", err)
 	}
 
+	rtdbClient, err := appFirebase.Database(ctx) // 🌟 ต้องมีส่วนนี้ใน main.go
+	if err != nil {
+		log.Fatalf("error initializing rtdb: %v", err)
+	}
+
 	// สร้าง Repository
-	userRepo := repository.NewUserRepository(firestoreClient)
+	userRepo := repository.NewUserRepository(firestoreClient, rtdbClient)
 	locationRepo := repository.NewLocationRepository(firestoreClient)
 
 	// สร้าง Handler
 	userHandler := handlers.NewUserHandler(userRepo, authClient)
 	locationHandler := handlers.NewLocationHandler(locationRepo)
 
-	// 🌟 4. กำหนด Route โดยเอา AuthMiddleware มาครอบฟังก์ชัน (ถ้าอันไหนไม่ต้องการเช็ค Token ให้เอา AuthMiddleware() ออกได้เลย)
+	http.HandleFunc("/api/users/sync_to_live", AuthMiddleware(appFirebase, userHandler.SyncUserToRTDBHandler))
+
 	http.HandleFunc("/api/users/sync", AuthMiddleware(appFirebase, userHandler.SyncUserHandler))
 	http.HandleFunc("/api/users/all", AuthMiddleware(appFirebase, userHandler.GetAllUsersHandler))
 	http.HandleFunc("/api/users/get_rider", AuthMiddleware(appFirebase, userHandler.GetRiderHandler))
