@@ -235,20 +235,28 @@ func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateS
 }
 
 func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.StoveDetailResponse, error) {
-	// 🌟 ป้องกันไม่ให้ Return ออกไปเป็น null ถ้าไม่มีข้อมูล
 	responseList := make([]models.StoveDetailResponse, 0)
 
-	iter := r.client.Collection("orders").Where("status", "==", "pending").Documents(ctx)
-	defer iter.Stop() // ปิด iterator เมื่อทำงานเสร็จ
+	// 1. กำหนดเวลา: เอาเฉพาะวันนี้ กับ เมื่อวาน
+	loc, _ := time.LoadLocation("Asia/Bangkok")
+	now := time.Now().In(loc)
+	startOfYesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, loc)
 
-	// 1. สร้างตัวแปรพักข้อมูล และ Map เก็บ Ref ของ Rider
+	// 2. ดึงข้อมูลจาก Firestore เฉพาะ 2 วันล่าสุด
+	iter := r.client.Collection("orders").
+		Where("status", "in", []string{"pending", "success"}).
+		Where("updated_at", ">=", startOfYesterday).
+		OrderBy("updated_at", firestore.Desc).
+		Documents(ctx)
+	defer iter.Stop()
+
 	var ordersData []models.Order
 	riderRefsMap := make(map[string]*firestore.DocumentRef)
 
 	for {
 		doc, err := iter.Next()
 		if err == iterator.Done {
-			break // อ่านจบแล้ว ออกจากลูป
+			break
 		}
 		if err != nil {
 			return nil, err
@@ -256,23 +264,19 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 
 		var order models.Order
 		if err := doc.DataTo(&order); err != nil {
-			continue // ข้ามอันที่แปลงข้อมูลไม่ได้ไป
+			continue
 		}
 
-		// เผื่อในเอกสารไม่มีฟิลด์ ID บันทึกไว้ ให้ใช้ Document ID เป็น OrderID
 		if order.ID == "" {
 			order.ID = doc.Ref.ID
 		}
 
 		ordersData = append(ordersData, order)
-
-		// ถ้ารายการไหนมีการแอสไซน์ไรเดอร์ไว้ ให้เก็บ Ref เอาไว้ไปดึงข้อมูล
 		if order.RiderID != "" {
 			riderRefsMap[order.RiderID] = r.client.Collection("users").Doc(order.RiderID)
 		}
 	}
 
-	// 2. 🌟 กวาดดึงข้อมูล Rider Profiles ทั้งหมดในครั้งเดียว (ลดการสืบค้น DB ซ้ำซ้อน)
 	riderProfiles := make(map[string]models.UserProfile)
 	if len(riderRefsMap) > 0 {
 		var refs []*firestore.DocumentRef
@@ -286,7 +290,6 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 				if uSnap.Exists() {
 					var userProfile models.UserProfile
 					if err := uSnap.DataTo(&userProfile); err == nil {
-						// กันเหนียวเผื่อในตาราง users ไม่ได้เซฟ UID เอาไว้
 						if userProfile.UID == "" {
 							userProfile.UID = uSnap.Ref.ID
 						}
@@ -297,23 +300,25 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 		}
 	}
 
-	// 3. 🌟 ประกอบร่างข้อมูลออเดอร์ เข้ากับข้อมูลไรเดอร์
 	for _, order := range ordersData {
+		if !order.Equipment.NeedEquipment && order.Equipment.StoveCount == 0 && order.Equipment.PanCount == 0 {
+			continue
+		}
+
 		detailRes := models.StoveDetailResponse{
 			OrderID: order.ID,
-			Status:  order.Status,
+			Status:  order.Status, // ใช้ค่าเดิม
 			Equipment: models.StoveEquipment{
 				NeedEquipment: order.Equipment.NeedEquipment,
 				StoveCount:    order.Equipment.StoveCount,
 				PanCount:      order.Equipment.PanCount,
 			},
-			Shipping: order.Shipping,
+			Shipping:  order.Shipping,
+			CreatedAt: order.CreatedAt,
 		}
 
-		// ถ้ารหัส Rider ตรงกับที่เราดึงมาได้ ให้ยัด Profile เข้าไปทั้งก้อนเลย
 		if order.RiderID != "" {
 			if profile, exists := riderProfiles[order.RiderID]; exists {
-				// 🎯 เอาเครื่องหมาย & ออก เพื่อส่งเป็น Value ธรรมดา
 				detailRes.RiderProfile = profile
 			}
 		}
@@ -321,19 +326,27 @@ func (r *JobRepository) GetStove(ctx context.Context, userID string) ([]models.S
 		responseList = append(responseList, detailRes)
 	}
 
+	getStatusWeight := func(status string) int {
+		if status == "success" {
+			return 2
+		}
+		return 1
+	}
+
+	sort.SliceStable(responseList, func(i, j int) bool {
+		w1 := getStatusWeight(responseList[i].Status)
+		w2 := getStatusWeight(responseList[j].Status)
+		return w1 < w2
+	})
+
 	return responseList, nil
 }
 
 func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, dateStr string, page int, limit int) ([]models.StoveDetailResponse, error) {
-	// 🌟 ป้องกันไม่ให้ Return ออกไปเป็น null ถ้าไม่มีข้อมูล
 	responseList := make([]models.StoveDetailResponse, 0)
-
-	// 🌟 1. สร้าง Base Query ค้นหาจากตาราง "orders" ของไรเดอร์คนนี้
 	query := r.client.Collection("orders").
-		Where("rider_id", "==", userID).
 		Where("status", "==", "success")
 
-	// 🌟 2. กรองตามวันที่ (ถ้ามี)
 	if dateStr != "" {
 		loc, _ := time.LoadLocation("Asia/Bangkok")
 		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
@@ -343,16 +356,12 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 
 		startOfDay := parsedDate
 		endOfDay := parsedDate.Add(24 * time.Hour).Add(-time.Nanosecond)
-
-		// ค้นหาจากวันที่เก็บเตาสำเร็จ (updated_at)
 		query = query.Where("updated_at", ">=", startOfDay).
 			Where("updated_at", "<=", endOfDay)
 	}
 
-	// 🌟 3. เรียงลำดับจากล่าสุดไปเก่าสุด
 	query = query.OrderBy("updated_at", firestore.Desc)
 
-	// 🌟 4. ระบบ Pagination (หน้าละกี่รายการ)
 	if page < 1 {
 		page = 1
 	}
@@ -361,12 +370,8 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 	}
 	offset := (page - 1) * limit
 	query = query.Offset(offset).Limit(limit)
-
-	// 🌟 5. ดึงข้อมูลจาก Firestore ตามเงื่อนไขที่เซ็ตไว้
 	iter := query.Documents(ctx)
 	defer iter.Stop()
-
-	// สร้างตัวแปรพักข้อมูล และ Map เก็บ Ref ของ Rider
 	var ordersData []models.Order
 	riderRefsMap := make(map[string]*firestore.DocumentRef)
 
@@ -381,23 +386,19 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 
 		var order models.Order
 		if err := doc.DataTo(&order); err != nil {
-			continue // ข้ามอันที่แปลงข้อมูลไม่ได้ไป
+			continue
 		}
 
-		// เผื่อในเอกสารไม่มีฟิลด์ ID บันทึกไว้ ให้ใช้ Document ID เป็น OrderID
 		if order.ID == "" {
 			order.ID = doc.Ref.ID
 		}
 
 		ordersData = append(ordersData, order)
-
-		// ถ้ารายการไหนมีการแอสไซน์ไรเดอร์ไว้ ให้เก็บ Ref เอาไว้ไปดึงข้อมูล
 		if order.RiderID != "" {
 			riderRefsMap[order.RiderID] = r.client.Collection("users").Doc(order.RiderID)
 		}
 	}
 
-	// 6. 🌟 กวาดดึงข้อมูล Rider Profiles ทั้งหมดในครั้งเดียว (เฉพาะไรเดอร์ในหน้านี้)
 	riderProfiles := make(map[string]models.UserProfile)
 	if len(riderRefsMap) > 0 {
 		var refs []*firestore.DocumentRef
@@ -421,7 +422,6 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 		}
 	}
 
-	// 7. 🌟 ประกอบร่างข้อมูลออเดอร์ เข้ากับข้อมูลไรเดอร์
 	for _, order := range ordersData {
 		detailRes := models.StoveDetailResponse{
 			OrderID: order.ID,
@@ -434,7 +434,6 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 			Shipping: order.Shipping,
 		}
 
-		// ถ้ารหัส Rider ตรงกับที่เราดึงมาได้ ให้ยัด Profile เข้าไปทั้งก้อนเลย
 		if order.RiderID != "" {
 			if profile, exists := riderProfiles[order.RiderID]; exists {
 				detailRes.RiderProfile = profile

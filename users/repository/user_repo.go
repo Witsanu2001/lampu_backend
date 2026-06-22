@@ -76,7 +76,7 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]models.UserProfile, erro
 
 func (r *UserRepository) UpdateUser(ctx context.Context, uid string, newRole string) error {
 	_, err := r.client.Collection("users").Doc(uid).Update(ctx, []firestore.Update{
-		{Path: "role", Value: newRole},
+		{Path: "Role", Value: newRole}, // 🌟 แก้จาก "role" เป็น "Role"
 	})
 	return err
 }

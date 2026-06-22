@@ -110,6 +110,7 @@ type StoveDetailResponse struct {
 	Equipment    StoveEquipment `json:"equipment"`
 	Shipping     Shipping       `json:"shipping"`
 	RiderProfile UserProfile    `json:"rider_profile,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 type UserProfile struct {

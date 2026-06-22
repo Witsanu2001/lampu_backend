@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/url"
 	"orders/models"
 	"sort"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/firestore/apiv1/firestorepb"
+	"cloud.google.com/go/storage"
 	"firebase.google.com/go/v4/db"
 	"google.golang.org/api/iterator"
 )
@@ -267,7 +270,6 @@ func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*mo
 
 func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, status string, userID string) (string, error) {
 
-	// 1. ดึงข้อมูลออเดอร์ปัจจุบันมาเช็กก่อน
 	docSnap, err := r.Client.Collection("orders").Doc(orderID).Get(ctx)
 	if err != nil {
 		return "", err
@@ -278,43 +280,63 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		return "", err
 	}
 
-	// 2. เช็กเงื่อนไขการเปลี่ยนสถานะอัตโนมัติ
-	finalStatus := status
+	// 🌟 1. ดักจับปัญหา Frontend ส่งตัวพิมพ์ใหญ่ หรือมีช่องว่าง (แปลงเป็นพิมพ์เล็กทั้งหมด)
+	finalStatus := strings.ToLower(strings.TrimSpace(status))
 
-	// เงื่อนไขที่ 1: ถ้าเป็น delivered และจ่ายด้วย promptpay ให้เด้งไป pending อัตโนมัติ
 	if finalStatus == "delivered" {
-		// ใช้ strings.ToLower เพื่อป้องกันปัญหาตัวพิมพ์เล็ก-ใหญ่ (เช่น "PromptPay")
 		if strings.ToLower(order.Payment.Method) == "promptpay" {
 			finalStatus = "pending"
 		}
 	}
 
-	// เงื่อนไขที่ 2: ถ้ากำลังจะกลายเป็น pending แต่ "ไม่ใช้เตา" (needEquipment == false) ให้ข้ามไป success เลย
 	if finalStatus == "pending" {
 		if !order.Equipment.NeedEquipment {
 			finalStatus = "success"
 		}
 	}
 
-	// 3. สร้างตัวแปรเก็บสิ่งที่จะอัปเดตลงตาราง Orders (ใช้ finalStatus)
 	var updates []firestore.Update
 	updates = append(updates, firestore.Update{Path: "status", Value: finalStatus})
 	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
 
-	// แยกเก็บคนละฟิลด์
 	if finalStatus == "ready" {
 		updates = append(updates, firestore.Update{Path: "rider_id", Value: userID})
 	} else {
 		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
 	}
 
-	// 4. อัปเดตข้อมูลตาราง orders ลง Firestore
+	// 🌟 2. บล็อกนี้จะทำงานแน่นอนถ้า finalStatus เป็น success
+	if finalStatus == "success" {
+		log.Println("🎯 [UpdateOrderStatus] เข้าเงื่อนไข success แล้ว! เตรียมสั่งลบรูป...")
+
+		// สั่งลบฟิลด์ใน Firestore (ดักไว้ทั้ง 2 ชื่อ เผื่อมีเอกสารเก่าใช้ชื่อ home_image)
+		updates = append(updates, firestore.Update{Path: "home_image_url", Value: firestore.Delete})
+		updates = append(updates, firestore.Update{Path: "home_image", Value: firestore.Delete})
+
+		// งัด URL ออกมา (ถ้าใน Struct หาไม่เจอ ให้ไปดึงจาก Raw Data)
+		imageUrl := order.HomeImageURL
+		if imageUrl == "" {
+			rawMap := docSnap.Data()
+			if val, ok := rawMap["home_image_url"].(string); ok {
+				imageUrl = val
+			} else if val, ok := rawMap["home_image"].(string); ok {
+				imageUrl = val
+			}
+		}
+
+		if imageUrl != "" {
+			log.Println("📸 [UpdateOrderStatus] เจอ URL แล้ว กำลังส่งไปลบที่ Storage:", imageUrl)
+			go r.deleteFileFromStorage(context.Background(), imageUrl)
+		} else {
+			log.Println("⚠️ [UpdateOrderStatus] ไม่พบลิงก์รูปภาพในฐานข้อมูล (ค่าว่าง)")
+		}
+	}
+
 	_, err = r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
 	if err != nil {
 		return "", err
 	}
 
-	// 5. เงื่อนไขเพิ่มเติม: เมื่อสถานะเป็น "ready" ให้สร้างงานส่งตาราง jobs
 	if finalStatus == "ready" {
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
@@ -332,7 +354,6 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 			return "", err
 		}
 
-		// ซิงค์ข้อมูลลง Realtime Database (RTDB) ให้แอปไรเดอร์เด้งรับงาน
 		refLiveJob := r.RTDBClient.NewRef("live_jobs/" + orderID)
 		_ = refLiveJob.Set(ctx, map[string]interface{}{
 			"order_id":   orderID,
@@ -342,14 +363,12 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		})
 	}
 
-	// 6. อัปเดตสถานะออเดอร์ลง Realtime Database (RTDB) สำหรับลูกค้า
 	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
 	_ = refLiveOrder.Update(ctx, map[string]interface{}{
 		"status":     finalStatus,
 		"updated_at": time.Now().Unix(),
 	})
 
-	// 7. จัดการคิวงาน (jobs) และสถานะไรเดอร์ (jobs_event)
 	if finalStatus == "shipping" || finalStatus == "delivered" {
 		loc := time.FixedZone("UTC+7", 7*3600)
 		todayStr := time.Now().In(loc).Format("2006-01-02")
@@ -368,12 +387,9 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 			var jobData map[string]interface{}
 			docJob.DataTo(&jobData)
 
-			// ดึงค่า Array ออกมาตรวจสอบ
 			if activeJobsRaw, ok := jobData["active_jobs"].([]interface{}); ok {
 				var updatedActiveJobs []interface{}
 				hasChanges := false
-
-				// วนลูปเช็กแต่ละออเดอร์ใน Array active_jobs
 				for _, itemRaw := range activeJobsRaw {
 					item, ok := itemRaw.(map[string]interface{})
 					if !ok {
@@ -381,25 +397,18 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 						continue
 					}
 
-					// 💡 1. ถ้าเจอ order_id ที่เรากำลังจัดการอยู่
 					if item["order_id"] == orderID {
 						hasChanges = true
 
 						if finalStatus == "shipping" {
-							// ถ้ากำลังไปส่ง -> เปลี่ยนสถานะ และ "เก็บไว้ใน Array เหมือนเดิม"
 							item["status"] = "start"
 							updatedActiveJobs = append(updatedActiveJobs, item)
-							remainingCount++ // งานนี้ยังไม่จบ นับเอาไว้
+							remainingCount++
 						} else if finalStatus == "delivered" {
-							// 🌟 จุดเปลี่ยน: ถ้าส่งสำเร็จแล้ว -> "ไม่ต้อง" append เข้าไปใน updatedActiveJobs
-							// (ข้ามไปเลย = ลบออกจาก Array) และไม่ต้องบวก remainingCount
 							continue
 						}
 					} else {
-						// 💡 2. สำหรับออเดอร์อื่นๆ ในคิว (ที่ไม่ได้กำลังอัปเดต) ให้เก็บกลับเข้า Array ตามปกติ
 						updatedActiveJobs = append(updatedActiveJobs, item)
-
-						// เช็กว่าออเดอร์อื่นนี้ยังค้างอยู่ไหม ถ้ายังค้างให้นับไว้
 						if st, ok := item["status"].(string); ok {
 							if st == "ready" || st == "start" {
 								remainingCount++
@@ -410,15 +419,12 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 
 				if hasChanges {
 					foundJob = true
-
-					// 🌟 ถ้ายอด remainingCount เป็น 0 หรือ Array ว่างเปล่า ให้ลบ Document งานทิ้งไปเลย
 					if remainingCount == 0 || len(updatedActiveJobs) == 0 {
 						_, err = docJob.Ref.Delete(ctx)
 						if err != nil {
 							return "", err
 						}
 					} else {
-						// แต่ถ้ายังมีงานเหลืออยู่ ให้อัปเดต Array ที่ถูกตัดรายการที่เสร็จแล้วออกไป กลับลง Firestore
 						_, err = docJob.Ref.Update(ctx, []firestore.Update{
 							{Path: "active_jobs", Value: updatedActiveJobs},
 							{Path: "updated_at", Value: time.Now()},
@@ -450,16 +456,14 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 
 				var eventStatus string
 				if finalStatus == "shipping" {
-					eventStatus = "start" // เริ่มไปส่ง
+					eventStatus = "start"
 				} else if finalStatus == "delivered" {
 					if remainingCount > 0 {
-						eventStatus = "pending" // ยังมีคิวอื่นรออยู่ใน Array active_jobs
+						eventStatus = "pending"
 					} else {
-						eventStatus = "" // ส่งครบทุกคิวใน Array แล้ว
+						eventStatus = ""
 					}
 				}
-
-				// อัปเดตสถานะลง jobs_event
 				_, err = docEvent.Ref.Update(ctx, []firestore.Update{
 					{Path: "status", Value: eventStatus},
 					{Path: "updated_at", Value: time.Now()},
@@ -471,8 +475,59 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		}
 	}
 
-	// ⚡ คืนค่า finalStatus กลับไปให้ Handler
 	return finalStatus, nil
+}
+
+func (r *OrderRepository) deleteFileFromStorage(ctx context.Context, fileURL string) error {
+	if !strings.Contains(fileURL, "firebasestorage.googleapis.com") {
+		return nil
+	}
+
+	u, err := url.Parse(fileURL)
+	if err != nil {
+		log.Printf("❌ Parse URL ขัดข้อง: %v\n", err)
+		return err
+	}
+
+	// u.Path ของ URL นี้จะได้: /v0/b/lampu-5a178.firebasestorage.app/o/home_images%2F08a61e...jpg
+	segments := strings.Split(u.Path, "/o/")
+	if len(segments) < 2 {
+		return nil
+	}
+
+	// 🌟 ใช้ PathUnescape เพื่อแปลง %2F ให้กลับมาเป็นเครื่องหมาย /
+	// ผลลัพธ์จะได้: home_images/08a61e18-2607-441d-a68f-1f54dd43ef19_20260622115721.jpg
+	objectPath, err := url.PathUnescape(segments[1])
+	if err != nil {
+		return err
+	}
+
+	// แยกหาชื่อ Bucket
+	bucketSegments := strings.Split(segments[0], "/b/")
+	if len(bucketSegments) < 2 {
+		return nil
+	}
+	bucketName := bucketSegments[1] // จะได้ lampu-5a178.firebasestorage.app
+
+	// พิมพ์ Log ยืนยันว่า Path ถูกต้อง (มีโฟลเดอร์ home_images/ นำหน้า)
+	log.Printf("🎯 กำลังสั่งลบรูปภาพใน Bucket: [%s] File: [%s]\n", bucketName, objectPath)
+
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		log.Printf("❌ สร้าง Storage Client ไม่สำเร็จ (อาจเป็นปัญหาเรื่องสิทธิ์): %v\n", err)
+		return err
+	}
+	defer client.Close()
+
+	// สั่งลบไฟล์
+	err = client.Bucket(bucketName).Object(objectPath).Delete(ctx)
+	if err != nil {
+		log.Printf("❌ ลบรูปภาพไม่สำเร็จ! กรุณาเช็คสิทธิ์ (IAM) ของ Service Account ว่ามีสิทธิ์ Storage Object Admin หรือไม่ Error: %v\n", err)
+		return err
+	}
+
+	log.Println("✅ ลบรูปภาพออกจาก Firebase Storage สำเร็จ!:", objectPath)
+	return nil
 }
 
 func (r *OrderRepository) CancelOrder(ctx context.Context, orderID string, reason string, userID string) error {
