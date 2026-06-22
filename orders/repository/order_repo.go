@@ -280,21 +280,23 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		return "", err
 	}
 
-	// 🌟 1. ดักจับปัญหา Frontend ส่งตัวพิมพ์ใหญ่ หรือมีช่องว่าง (แปลงเป็นพิมพ์เล็กทั้งหมด)
-	finalStatus := strings.ToLower(strings.TrimSpace(status))
+	// 🌟 1. ดักจับสถานะที่ส่งเข้ามาจริงๆ และแยกตัวแปรไม่ให้ปนกับตอนถูกแปลงอัตโนมัติ
+	incomingStatus := strings.ToLower(strings.TrimSpace(status))
+	finalStatus := incomingStatus
 
+	// 🌟 เงื่อนไขเปลี่ยนสถานะอัตโนมัติ
 	if finalStatus == "delivered" {
 		if strings.ToLower(order.Payment.Method) == "promptpay" {
 			finalStatus = "pending"
 		}
 	}
-
 	if finalStatus == "pending" {
 		if !order.Equipment.NeedEquipment {
 			finalStatus = "success"
 		}
 	}
 
+	// 🌟 เตรียมคำสั่งอัปเดต
 	var updates []firestore.Update
 	updates = append(updates, firestore.Update{Path: "status", Value: finalStatus})
 	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
@@ -305,38 +307,41 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
 	}
 
-	// 🌟 2. บล็อกนี้จะทำงานแน่นอนถ้า finalStatus เป็น success
-	if finalStatus == "success" {
-		log.Println("🎯 [UpdateOrderStatus] เข้าเงื่อนไข success แล้ว! เตรียมสั่งลบรูป...")
+	// 🌟 2. เช็คการลบรูปจาก "incomingStatus" แทน!
+	// แปลว่าถ้าต้นทางส่ง "delivered" มา ไม่ว่า finalStatus จะโดนแปลงเป็นอะไร รูปก็จะถูกลบทิ้งเสมอ
+	if incomingStatus == "delivered" {
+		log.Println("🎯 [UpdateOrderStatus] ได้รับคำสั่ง delivered แล้ว! เตรียมสั่งลบรูป...")
 
-		// สั่งลบฟิลด์ใน Firestore (ดักไว้ทั้ง 2 ชื่อ เผื่อมีเอกสารเก่าใช้ชื่อ home_image)
+		// สั่งลบฟิลด์ใน Firestore
 		updates = append(updates, firestore.Update{Path: "home_image_url", Value: firestore.Delete})
-		updates = append(updates, firestore.Update{Path: "home_image", Value: firestore.Delete})
 
-		// งัด URL ออกมา (ถ้าใน Struct หาไม่เจอ ให้ไปดึงจาก Raw Data)
+		// งัด URL ออกมา
 		imageUrl := order.HomeImageURL
 		if imageUrl == "" {
 			rawMap := docSnap.Data()
 			if val, ok := rawMap["home_image_url"].(string); ok {
 				imageUrl = val
-			} else if val, ok := rawMap["home_image"].(string); ok {
-				imageUrl = val
 			}
 		}
 
 		if imageUrl != "" {
-			log.Println("📸 [UpdateOrderStatus] เจอ URL แล้ว กำลังส่งไปลบที่ Storage:", imageUrl)
+			log.Println("📸 [UpdateOrderStatus] กำลังส่ง URL ไปลบที่ Storage:", imageUrl)
+			// ยิงคำสั่งให้ฟังก์ชัน deleteFileFromStorage ทำงานเบื้องหลัง
 			go r.deleteFileFromStorage(context.Background(), imageUrl)
 		} else {
-			log.Println("⚠️ [UpdateOrderStatus] ไม่พบลิงก์รูปภาพในฐานข้อมูล (ค่าว่าง)")
+			log.Println("⚠️ [UpdateOrderStatus] ไม่พบลิงก์รูปภาพ (ค่าว่าง)")
 		}
 	}
 
+	// อัปเดตลง Firestore
 	_, err = r.Client.Collection("orders").Doc(orderID).Update(ctx, updates)
 	if err != nil {
 		return "", err
 	}
 
+	// ==========================================
+	// โค้ดส่วนจัดการ Jobs และ RTDB ด้านล่างเหมือนเดิมทั้งหมด
+	// ==========================================
 	if finalStatus == "ready" {
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
