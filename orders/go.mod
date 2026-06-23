@@ -6,7 +6,12 @@ require firebase.google.com/go/v4 v4.20.0
 
 require github.com/joho/godotenv v1.5.1
 
-require github.com/line/line-bot-sdk-go/v7 v7.21.0 // indirect
+require (
+	github.com/jung-kurt/gofpdf v1.16.2 // indirect
+	github.com/line/line-bot-sdk-go/v7 v7.21.0 // indirect
+	github.com/phpdave11/gofpdi v1.0.14-0.20211212211723-1f10f9844311 // indirect
+	github.com/pkg/errors v0.8.1 // indirect
+)
 
 require (
 	cel.dev/expr v0.25.2 // indirect
@@ -18,7 +23,7 @@ require (
 	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/longrunning v1.0.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
-	cloud.google.com/go/storage v1.62.1
+	cloud.google.com/go/storage v1.62.3
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 // indirect
@@ -45,6 +50,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/signintech/gopdf v0.36.1
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect

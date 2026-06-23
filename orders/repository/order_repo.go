@@ -192,6 +192,44 @@ func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.
 	return ordersSummary, nil
 }
 
+func (r *OrderRepository) GetOrdersPDF(ctx context.Context, startDate, endDate time.Time) ([]models.Order, error) {
+	// ปรับเวลาให้คลุมตั้งแต่ 00:00:00 ถึง 23:59:59
+	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
+
+	// คิวรีดึงข้อมูลจาก Firestore
+	snapshots, err := r.Client.Collection("orders").
+		Where("status", "==", "success").
+		Where("CreatedAt", ">=", start).
+		Where("CreatedAt", "<=", end).
+		OrderBy("CreatedAt", firestore.Desc).
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 🌟 สร้าง Array ของ models.Order เปล่าๆ
+	var orders []models.Order
+
+	// วนลูปยัดข้อมูลลง Array ตรงๆ ได้เลย ไม่ต้องประกอบร่างใหม่แล้ว!
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+
+		// ดึง ID ของ Document มาใส่ในฟิลด์ ID
+		order.ID = snap.Ref.ID
+
+		// เอาใส่ Array
+		orders = append(orders, order)
+	}
+
+	return orders, nil
+}
+
 func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) ([]map[string]interface{}, error) {
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).

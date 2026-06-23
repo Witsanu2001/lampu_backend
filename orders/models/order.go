@@ -107,6 +107,19 @@ type SuccessOrderSummary struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type SuccessOrderSummaryPDF struct {
+	OrderID     string
+	Recipient   string
+	Phone       string
+	Address     string
+	ItemsDetail string  // สรุปรายการสินค้าและจำนวน
+	OrderTotal  float64 // ราคาออเดอร์ (ไม่รวมส่ง)
+	ShippingFee float64 // ค่าส่ง
+	GrandTotal  float64 // ยอดรวม
+	CreatedAt   time.Time
+	SlipURL     string
+}
+
 type UserProfile struct {
 	UID         string    `json:"uid"`
 	Email       string    `json:"email"`

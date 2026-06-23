@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"orders/models"
 	"orders/repository"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -247,6 +248,78 @@ func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
 		Success: true,
 		Message: "ดึงข้อมูลออเดอร์สำเร็จ",
 		Data:    orders,
+	})
+}
+
+func (h *OrderHandler) GetOrdersPDF(c *fiber.Ctx) error {
+	ctx := context.Background()
+
+	// 1. รับค่า Start Date และ End Date
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	if startDateStr == "" || endDateStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "กรุณาระบุ start_date และ end_date (YYYY-MM-DD)",
+		})
+	}
+
+	// 2. แปลง String เป็น Time
+	startDate, errStart := time.ParseInLocation("2006-01-02", startDateStr, time.Local)
+	endDate, errEnd := time.ParseInLocation("2006-01-02", endDateStr, time.Local)
+	if errStart != nil || errEnd != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้ YYYY-MM-DD",
+		})
+	}
+
+	// 3. ดึงข้อมูลจาก Repo ตามช่วงเวลา
+	orders, err := h.Repo.GetOrdersPDF(ctx, startDate, endDate)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders: " + err.Error(),
+		})
+	}
+
+	if len(orders) == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(utils.APIResponse{
+			Success: false,
+			Message: "ไม่พบข้อมูลออเดอร์ในช่วงเวลาที่กำหนด",
+		})
+	}
+
+	// 4. สร้าง PDF
+	pdfPath, err := utils.GenerateOrderPDF(orders)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to generate PDF: " + err.Error(),
+		})
+	}
+
+	// 🌟 ตั้งค่าให้ลบไฟล์ PDF ในเครื่องเซิร์ฟเวอร์ทิ้งเสมอเมื่อฟังก์ชันทำงานเสร็จ (ประหยัดพื้นที่)
+	defer os.Remove(pdfPath)
+
+	// 5. 🌟 อัปโหลดขึ้น Storage แทนการดาวน์โหลด
+	// ใช้ Unix Time ต่อท้ายเพื่อป้องกันชื่อไฟล์ซ้ำกัน
+	destFileName := fmt.Sprintf("reports/orders_report_%s_to_%s_%d.pdf", startDateStr, endDateStr, time.Now().Unix())
+
+	pdfURL, err := utils.UploadPDFToStorage(ctx, pdfPath, destFileName)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "อัปโหลด PDF ไม่สำเร็จ: " + err.Error(),
+		})
+	}
+
+	// 6. 🌟 ส่ง URL กลับไปให้หน้าบ้าน (React) ในรูปแบบ JSON
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "สร้างและอัปโหลดรายงานสำเร็จ",
+		Data:    pdfURL, // หน้าบ้านจะเอา URL นี้ไปแสดงผลใน iframe หรือให้ผู้ใช้กดโหลดได้เลย
 	})
 }
 

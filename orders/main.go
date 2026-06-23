@@ -146,6 +146,7 @@ func main() {
 	orderHandler := handlers.NewOrderHandler(orderRepo, bucket, bucketName)
 
 	ordersApi.Get("/orders_get/success", orderHandler.GetSuccessOrders)
+	ordersApi.Get("/orders_get/success/pdf", orderHandler.GetOrdersPDF)
 	ordersApi.Post("/orders_add", orderHandler.CreateOrder)
 	ordersApi.Get("/orders_get", orderHandler.GetAllOrders)
 	ordersApi.Get("/orders_get/:id/history", orderHandler.GetAllOrdersByID)
