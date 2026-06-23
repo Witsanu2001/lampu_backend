@@ -87,11 +87,11 @@ type UpdateStatusRequest struct {
 }
 
 type AssignJobPayload struct {
-	OrderID     string  `json:"order_id"`
-	RiderID     string  `json:"rider_id"`
-	QueueNumber int     `json:"queue_number"`
-	OrderSetQty int     `json:"order_set_qty"`
-	DeliveryFee float64 `json:"delivery_fee"`
+	OrderID          string  `json:"order_id"`
+	RiderID          string  `json:"rider_id"`
+	QueueNumber      int     `json:"queue_number"`
+	TotalOrderSets   int     `json:"total_order_sets"`
+	TotalDeliveryFee float64 `json:"total_delivery_fee"`
 }
 
 type BulkAssignRequest struct {

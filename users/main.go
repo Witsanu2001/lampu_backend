@@ -144,6 +144,7 @@ func main() {
 	// ส่วนของ Location
 	http.HandleFunc("/api/users/location_add", AuthMiddleware(appFirebase, locationHandler.SaveLocationHandler))
 	http.HandleFunc("/api/users/location_get", AuthMiddleware(appFirebase, locationHandler.GetLocationsHandler))
+	http.HandleFunc("/api/users/location_get/default", AuthMiddleware(appFirebase, locationHandler.GetLocationDefaultHandler))
 	http.HandleFunc("/api/users/location_update", AuthMiddleware(appFirebase, locationHandler.UpdateLocationHandler))
 	http.HandleFunc("/api/users/location_delete", AuthMiddleware(appFirebase, locationHandler.DeleteLocationHandler))
 

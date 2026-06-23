@@ -315,6 +315,34 @@ func (h *OrderHandler) GetByUserID(c *fiber.Ctx) error {
 	})
 }
 
+func (h *OrderHandler) GetOrderByUserToday(c *fiber.Ctx) error {
+	ctx := context.Background()
+	userID := c.Params("user_id")
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.APIResponse{
+			Success: false,
+			Message: "User ID is required",
+		})
+	}
+
+	orders, err := h.Repo.GetOrderByUserToday(ctx, userID)
+	if err != nil {
+
+		log.Printf("🔥 Firestore Error: %v", err)
+
+		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
+			Success: false,
+			Message: "Failed to get orders for this user",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
+		Success: true,
+		Message: "ดึงข้อมูลออเดอร์ของผู้ใช้งานสำเร็จ",
+		Data:    orders,
+	})
+}
+
 func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 	ctx := context.Background()
 
@@ -399,6 +427,10 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		lineMsg = "🥘 ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..."
 
 	case "ready":
+		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
+		lineMsg = fmt.Sprintf("🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว\nเลขออเดอร์: %s", orderID)
+
+	case "cancel":
 		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
 		lineMsg = fmt.Sprintf("🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว\nเลขออเดอร์: %s", orderID)
 

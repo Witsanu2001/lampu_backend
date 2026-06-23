@@ -148,7 +148,6 @@ func (r *UserRepository) GetRiders(ctx context.Context) ([]models.RiderWithJobsR
 	iter := r.client.Collection("users").Where("Role", "==", "rider").Documents(ctx)
 	defer iter.Stop()
 
-	// หาค่าวันที่ของวันนี้ (เช่น "2026-06-18")
 	todayDateStr := time.Now().Format("2006-01-02")
 
 	for {
@@ -164,21 +163,12 @@ func (r *UserRepository) GetRiders(ctx context.Context) ([]models.RiderWithJobsR
 		if err := doc.DataTo(&user); err != nil {
 			return nil, err
 		}
-
-		// 🌟 1. สร้างตัวแปรรับค่า (ถ้าไม่มีงานจะเป็น nil อัตโนมัติ)
 		var currentJobsEvent *models.JobsEvent
-
-		// 🌟 2. ประกอบ Document ID (รูปแบบเดียวกับตอนที่เราบันทึกข้อมูล)
 		jobsEventID := fmt.Sprintf("%s_%s", user.UID, todayDateStr)
-
-		// 🌟 3. หยิบ Document นั้นขึ้นมาตรงๆ (เร็วกว่าการใช้ Where)
 		jobDoc, err := r.client.Collection("jobs_event").Doc(jobsEventID).Get(ctx)
-
-		// ถ้าหยิบมาได้และมีข้อมูลอยู่จริง ให้แปลงใส่ Struct
 		if err == nil && jobDoc.Exists() {
 			var event models.JobsEvent
 			if err := jobDoc.DataTo(&event); err == nil {
-				// ชี้ pointer ไปที่ข้อมูลที่ดึงมาได้
 				currentJobsEvent = &event
 			}
 		}

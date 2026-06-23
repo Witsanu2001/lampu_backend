@@ -73,6 +73,33 @@ func (r *LocationRepository) GetLocationsByUserID(ctx context.Context, userID st
 	return locations, nil
 }
 
+func (r *LocationRepository) GetLocationDefault(ctx context.Context, userID string) (*models.Location, error) {
+	// 🌟 เพิ่ม Where เพื่อเช็ค is_default และจำกัด Limit แค่ 1
+	snapshots, err := r.Client.Collection("locations").
+		Where("user_id", "==", userID).
+		Where("is_default", "==", true). // กรองเอาเฉพาะอันที่เป็นที่อยู่หลัก
+		Limit(1).                        // ดึงมาแค่ 1 รายการ
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// 🌟 เช็คว่าถ้าหาไม่เจอเลย ให้ return nil
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+
+	// 🌟 เอาข้อมูลจากตัวแรกที่เจอ (index 0) มาแปลงเป็น struct
+	var loc models.Location
+	if err := snapshots[0].DataTo(&loc); err != nil {
+		return nil, err
+	}
+
+	return &loc, nil
+}
+
 // ฟังก์ชันสำหรับลบที่อยู่จัดส่ง
 func (r *LocationRepository) DeleteLocation(ctx context.Context, id string) error {
 	_, err := r.Client.Collection("locations").Doc(id).Delete(ctx)

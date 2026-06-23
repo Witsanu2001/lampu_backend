@@ -73,6 +73,32 @@ func (h *LocationHandler) GetLocationsHandler(w http.ResponseWriter, r *http.Req
 	utils.SendJSONResponse(w, http.StatusOK, true, "Locations fetched successfully", locations)
 }
 
+func (h *LocationHandler) GetLocationDefaultHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.SendJSONResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		utils.SendJSONResponse(w, http.StatusBadRequest, false, "Missing 'user_id' parameter", nil)
+		return
+	}
+
+	location, err := h.repo.GetLocationDefault(r.Context(), userID)
+	if err != nil {
+		utils.SendJSONResponse(w, http.StatusInternalServerError, false, "Failed to fetch default location", nil)
+		return
+	}
+
+	if location == nil {
+		utils.SendJSONResponse(w, http.StatusNotFound, false, "Default location not found", nil)
+		return
+	}
+
+	utils.SendJSONResponse(w, http.StatusOK, true, "Default location fetched successfully", location)
+}
+
 // ฟังก์ชัน Handler สำหรับการแก้ไขที่อยู่
 func (h *LocationHandler) UpdateLocationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPost {

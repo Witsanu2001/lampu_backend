@@ -253,6 +253,81 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 	return response, nil
 }
 
+func (r *OrderRepository) GetOrderByUserToday(ctx context.Context, userID string) ([]map[string]interface{}, error) {
+	// 🌟 1. คำนวณหาเวลาเริ่มต้นของวันนี้ (00:00:00) และวันพรุ่งนี้ (00:00:00)
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfTomorrow := startOfToday.Add(24 * time.Hour)
+
+	// 🌟 2. เพิ่ม Where กรองเวลาเข้าไปใน Query
+	snapshots, err := r.Client.Collection("orders").
+		Where("user_id", "==", userID).
+		Where("CreatedAt", ">=", startOfToday).   // ตั้งแต่เริ่มวัน
+		Where("CreatedAt", "<", startOfTomorrow). // จนถึงก่อนเริ่มวันพรุ่งนี้
+		OrderBy("CreatedAt", firestore.Desc).
+		Documents(ctx).
+		GetAll()
+
+	if err != nil {
+		return nil, err
+	}
+
+	var response []map[string]interface{}
+
+	// ถ้าไม่มีข้อมูลเลย ให้ return array ว่างกลับไปเพื่อไม่ให้เป็น null
+	if len(snapshots) == 0 {
+		return make([]map[string]interface{}, 0), nil
+	}
+
+	for _, snap := range snapshots {
+		var order models.Order
+		if err := snap.DataTo(&order); err != nil {
+			return nil, err
+		}
+		order.ID = snap.Ref.ID
+		var mappedMainItems []map[string]interface{}
+		for _, item := range order.MainItems {
+			mappedMainItems = append(mappedMainItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
+		}
+
+		mappedOrder := map[string]interface{}{
+			"id":        order.ID,
+			"user_id":   order.UserID,
+			"mainItems": mappedMainItems,
+			"shipping": map[string]interface{}{
+				"recipient": order.Shipping.Recipient,
+				"phone":     order.Shipping.Phone,
+				"address":   order.Shipping.Address,
+			},
+			"payment": map[string]interface{}{
+				"method": order.Payment.Method,
+			},
+			"totals": map[string]interface{}{
+				"grandTotal": order.Totals.GrandTotal,
+			},
+			"equipment": map[string]interface{}{
+				"needEquipment": order.Equipment.NeedEquipment,
+				"stoveCount":    order.Equipment.StoveCount,
+				"panCount":      order.Equipment.PanCount,
+			},
+			"status":     order.Status,
+			"created_at": order.CreatedAt,
+			"updated_at": order.UpdatedAt,
+		}
+
+		if order.Status == "refuse" {
+			mappedOrder["cancel_reason"] = order.CancelReason
+		}
+
+		response = append(response, mappedOrder)
+	}
+
+	return response, nil
+}
+
 func (r *OrderRepository) GetOrderByID(ctx context.Context, orderID string) (*models.Order, error) {
 	snap, err := r.Client.Collection("orders").Doc(orderID).Get(ctx)
 	if err != nil {
@@ -284,31 +359,64 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 	incomingStatus := strings.ToLower(strings.TrimSpace(status))
 	finalStatus := incomingStatus
 
+	isCanceled := false
+	if incomingStatus == "cancel" {
+		finalStatus = "preparing"
+		isCanceled = true
+	}
+
 	// 🌟 เงื่อนไขเปลี่ยนสถานะอัตโนมัติ
 	if finalStatus == "delivered" {
 		if strings.ToLower(order.Payment.Method) == "promptpay" {
 			finalStatus = "pending"
 		}
 	}
+
 	if finalStatus == "pending" {
 		if !order.Equipment.NeedEquipment {
 			finalStatus = "success"
+
+			// 🌟 1. อัปเดตสถานะ "" ลงใน jobs_event ทันที
+			loc := time.FixedZone("UTC+7", 7*3600)
+			todayStr := time.Now().In(loc).Format("2006-01-02")
+
+			// หา Rider ID
+			var riderIDForEvent string
+			if raw, ok := docSnap.Data()["rider_id"].(string); ok && raw != "" {
+				riderIDForEvent = raw
+			} else {
+				riderIDForEvent = userID
+			}
+
+			// สั่งอัปเดต Firestore
+			jobsEventID := fmt.Sprintf("%s_%s", riderIDForEvent, todayStr)
+			_, errEvent := r.Client.Collection("jobs_event").Doc(jobsEventID).Update(ctx, []firestore.Update{
+				{Path: "status", Value: ""},
+				{Path: "updated_at", Value: time.Now()},
+			})
+			if errEvent != nil {
+				log.Printf("❌ อัปเดตเคลียร์ status ใน jobs_event ขัดข้อง: %v\n", errEvent)
+			}
+
+			// ✂️ การลบ live_orders ถูกย้ายไปดักที่บรรทัดล่างสุดแล้วครับ
 		}
 	}
 
-	// 🌟 เตรียมคำสั่งอัปเดต
+	// 🌟 เตรียมคำสั่งอัปเดตออเดอร์
 	var updates []firestore.Update
 	updates = append(updates, firestore.Update{Path: "status", Value: finalStatus})
 	updates = append(updates, firestore.Update{Path: "updated_at", Value: time.Now()})
 
 	if finalStatus == "ready" {
 		updates = append(updates, firestore.Update{Path: "rider_id", Value: userID})
+	} else if isCanceled {
+		// 🌟 ถ้าไรเดอร์ยกเลิก ให้เอา rider_id ออกจากออเดอร์
+		updates = append(updates, firestore.Update{Path: "rider_id", Value: firestore.Delete})
+		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
 	} else {
 		updates = append(updates, firestore.Update{Path: "updated_by", Value: userID})
 	}
 
-	// 🌟 2. เช็คการลบรูปจาก "incomingStatus" แทน!
-	// แปลว่าถ้าต้นทางส่ง "delivered" มา ไม่ว่า finalStatus จะโดนแปลงเป็นอะไร รูปก็จะถูกลบทิ้งเสมอ
 	if incomingStatus == "delivered" {
 		log.Println("🎯 [UpdateOrderStatus] ได้รับคำสั่ง delivered แล้ว! เตรียมสั่งลบรูป...")
 
@@ -339,9 +447,6 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		return "", err
 	}
 
-	// ==========================================
-	// โค้ดส่วนจัดการ Jobs และ RTDB ด้านล่างเหมือนเดิมทั้งหมด
-	// ==========================================
 	if finalStatus == "ready" {
 		jobRef := r.Client.Collection("jobs").Doc(orderID)
 
@@ -368,33 +473,55 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		})
 	}
 
-	refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
-	_ = refLiveOrder.Update(ctx, map[string]interface{}{
-		"status":     finalStatus,
-		"updated_at": time.Now().Unix(),
-	})
+	// 🌟 ป้องกันไม่ให้ข้อมูลฟื้นคืนชีพใน RTDB ถ้ามันกำลังจะถูกลบ
+	if finalStatus != "pending" && finalStatus != "success" {
+		refLiveOrder := r.RTDBClient.NewRef("live_orders/" + orderID)
+		_ = refLiveOrder.Update(ctx, map[string]interface{}{
+			"status":     finalStatus,
+			"updated_at": time.Now().Unix(),
+		})
+	}
 
-	if finalStatus == "shipping" || finalStatus == "delivered" {
+	// 🌟 จัดการดึงงานออกจาก jobs เมื่อ shipping, delivered หรือ cancel
+	if incomingStatus == "shipping" || incomingStatus == "delivered" || isCanceled {
 		loc := time.FixedZone("UTC+7", 7*3600)
 		todayStr := time.Now().In(loc).Format("2006-01-02")
 
+		var riderID string
+		if raw, ok := docSnap.Data()["rider_id"].(string); ok && raw != "" {
+			riderID = raw
+		} else {
+			riderID = userID
+		}
+
+		// ค้นหาคิวงานทั้งหมดของไรเดอร์คนนี้
 		iterJob := r.Client.Collection("jobs").
-			Where("rider_id", "==", userID).
+			Where("rider_id", "==", riderID).
 			Where("status_job", "==", "active").
-			Limit(1).
 			Documents(ctx)
 
-		docJob, err := iterJob.Next()
-		var remainingCount int = 0
+		var totalRemainingCount int = 0
 		var foundJob bool = false
+		var targetJobDocID string
 
-		if err == nil {
+		for {
+			docJob, err := iterJob.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				log.Println("❌ Error iterating jobs:", err)
+				break
+			}
+
 			var jobData map[string]interface{}
 			docJob.DataTo(&jobData)
 
 			if activeJobsRaw, ok := jobData["active_jobs"].([]interface{}); ok {
 				var updatedActiveJobs []interface{}
 				hasChanges := false
+				localRemainingCount := 0
+
 				for _, itemRaw := range activeJobsRaw {
 					item, ok := itemRaw.(map[string]interface{})
 					if !ok {
@@ -404,83 +531,207 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 
 					if item["order_id"] == orderID {
 						hasChanges = true
+						foundJob = true
+						targetJobDocID = docJob.Ref.ID
 
-						if finalStatus == "shipping" {
+						if incomingStatus == "shipping" {
 							item["status"] = "start"
 							updatedActiveJobs = append(updatedActiveJobs, item)
-							remainingCount++
-						} else if finalStatus == "delivered" {
-							continue
+							localRemainingCount++
+						} else if incomingStatus == "delivered" || isCanceled {
+							continue // ลบทิ้งจากอาร์เรย์
 						}
 					} else {
 						updatedActiveJobs = append(updatedActiveJobs, item)
 						if st, ok := item["status"].(string); ok {
 							if st == "ready" || st == "start" {
-								remainingCount++
+								localRemainingCount++
 							}
 						}
 					}
 				}
 
 				if hasChanges {
-					foundJob = true
-					if remainingCount == 0 || len(updatedActiveJobs) == 0 {
-						_, err = docJob.Ref.Delete(ctx)
-						if err != nil {
-							return "", err
-						}
+					if localRemainingCount == 0 || len(updatedActiveJobs) == 0 {
+						_, _ = docJob.Ref.Delete(ctx)
 					} else {
-						_, err = docJob.Ref.Update(ctx, []firestore.Update{
+						_, _ = docJob.Ref.Update(ctx, []firestore.Update{
 							{Path: "active_jobs", Value: updatedActiveJobs},
 							{Path: "updated_at", Value: time.Now()},
 						})
-						if err != nil {
-							return "", err
-						}
 					}
 				}
+
+				totalRemainingCount += localRemainingCount
 			}
 		}
 
 		if foundJob {
-			iterEvent := r.Client.Collection("jobs_event").
-				Where("rider_id", "==", userID).
-				Where("date", "==", todayStr).
-				Where("status", "in", []string{"start", "pending"}).
-				Documents(ctx)
-			defer iterEvent.Stop()
+			jobsEventID := fmt.Sprintf("%s_%s", riderID, todayStr)
+			jobsEventRef := r.Client.Collection("jobs_event").Doc(jobsEventID)
 
-			for {
-				docEvent, err := iterEvent.Next()
-				if err == iterator.Done {
-					break
-				}
-				if err != nil {
-					return "", err
+			if incomingStatus == "shipping" {
+				var totalOrderSets int
+				var totalDeliveryFee float64
+
+				for _, item := range order.MainItems {
+					totalOrderSets += item.Quantity
 				}
 
-				var eventStatus string
-				if finalStatus == "shipping" {
-					eventStatus = "start"
-				} else if finalStatus == "delivered" {
-					if remainingCount > 0 {
-						eventStatus = "pending"
-					} else {
-						eventStatus = ""
+				rawMap := docSnap.Data()
+				if shippingRaw, ok := rawMap["shipping"].(map[string]interface{}); ok {
+					if tf, ok := shippingRaw["totalFee"].(float64); ok {
+						totalDeliveryFee = tf
+					} else if tf, ok := shippingRaw["totalFee"].(int64); ok {
+						totalDeliveryFee = float64(tf)
+					}
+				} else if totalsRaw, ok := rawMap["totals"].(map[string]interface{}); ok {
+					if tf, ok := totalsRaw["shippingFee"].(float64); ok {
+						totalDeliveryFee = tf
+					} else if tf, ok := totalsRaw["shippingFee"].(int64); ok {
+						totalDeliveryFee = float64(tf)
 					}
 				}
-				_, err = docEvent.Ref.Update(ctx, []firestore.Update{
+
+				_, err = jobsEventRef.Set(ctx, map[string]interface{}{
+					"rider_id":           riderID,
+					"date":               todayStr,
+					"status":             "start",
+					"total_order_sets":   firestore.Increment(totalOrderSets),
+					"total_delivery_fee": firestore.Increment(totalDeliveryFee),
+					"updated_at":         time.Now(),
+					"job_ids":            firestore.ArrayUnion(targetJobDocID),
+				}, firestore.MergeAll)
+
+				if err != nil {
+					log.Printf("❌ อัปเดต jobs_event ขัดข้อง: %v\n", err)
+				}
+
+			} else if incomingStatus == "delivered" || isCanceled {
+				var eventStatus string
+
+				// ถ้ายังมีงานเหลือให้คงสถานะ "start" ไว้
+				if totalRemainingCount > 0 {
+					eventStatus = "start"
+				} else {
+					// ถ้าส่งครบหมดแล้ว ค่อยเคลียร์เป็นว่าง ""
+					eventStatus = ""
+				}
+
+				_, err = jobsEventRef.Update(ctx, []firestore.Update{
 					{Path: "status", Value: eventStatus},
 					{Path: "updated_at", Value: time.Now()},
 				})
 				if err != nil {
-					return "", err
+					log.Printf("❌ อัปเดต jobs_event ตอน delivered/cancel ขัดข้อง: %v\n", err)
 				}
 			}
 		}
 	}
 
-	return finalStatus, nil
+	if incomingStatus == "delivered" || isCanceled {
+		var riderID string
+		if raw, ok := docSnap.Data()["rider_id"].(string); ok && raw != "" {
+			riderID = raw
+		} else {
+			riderID = userID
+		}
+
+		if riderID != "" {
+			refLiveJobToDelete := r.RTDBClient.NewRef(fmt.Sprintf("live_jobs/%s/%s", riderID, orderID))
+			err := refLiveJobToDelete.Delete(ctx)
+			if err != nil {
+				log.Printf("❌ ลบ RTDB ขัดข้อง: %v\n", err)
+			} else {
+				log.Printf("✅ ลบ RTDB สำเร็จ! ล้างงานของ Rider: %s ออกแล้ว\n", riderID)
+			}
+		} else {
+			log.Println("⚠️ ไม่สามารถลบ live_jobs ได้เพราะไม่รู้ว่า Rider ID คืออะไร")
+		}
+	}
+
+	// 🌟 รวบยอดลบ live_orders ทีเดียวตรงนี้เลย ทั้งเคสที่กลายเป็น pending และ success
+	if finalStatus == "pending" || finalStatus == "success" {
+		refLiveOrderToDelete := r.RTDBClient.NewRef(fmt.Sprintf("live_orders/%s", orderID))
+		err := refLiveOrderToDelete.Delete(ctx)
+		if err != nil {
+			log.Printf("❌ ลบ live_orders ขัดข้อง: %v\n", err)
+		} else {
+			log.Printf("✅ ลบ live_orders สำเร็จ! ล้างออเดอร์ %s ออกจากระบบ RTDB แล้ว\n", orderID)
+		}
+	}
+
+	return incomingStatus, nil
+}
+
+func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jobs []models.AssignJobPayload) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	batch := r.Client.Batch()
+	rtdbUpdates := make(map[string]interface{})
+	now := time.Now()
+	nowUnix := now.Unix()
+
+	var taskItems []interface{}
+
+	for _, job := range jobs {
+		// --- อัปเดตตาราง orders ---
+		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
+		batch.Update(orderRef, []firestore.Update{
+			{Path: "status", Value: "ready"},
+			{Path: "rider_id", Value: riderID},
+			{Path: "queue_number", Value: job.QueueNumber},
+			{Path: "updated_at", Value: now},
+		})
+
+		taskObj := map[string]interface{}{
+			"order_id":     job.OrderID,
+			"status":       "ready",
+			"queue_number": job.QueueNumber,
+			"assigned_at":  now,
+		}
+		taskItems = append(taskItems, taskObj)
+
+		rtdbUpdates["live_orders/"+job.OrderID+"/status"] = "ready"
+		rtdbUpdates["live_orders/"+job.OrderID+"/updated_at"] = nowUnix
+		rtdbUpdates["live_jobs/"+riderID+"/"+job.OrderID] = map[string]interface{}{
+			"status":       "ready",
+			"queue_number": job.QueueNumber,
+			"updated_at":   nowUnix,
+		}
+	}
+
+	jobRef := r.Client.Collection("jobs").NewDoc()
+	jobID := jobRef.ID
+	batch.Set(jobRef, map[string]interface{}{
+		"job_id":      jobID,
+		"rider_id":    riderID,
+		"created_at":  now,
+		"updated_at":  now,
+		"active_jobs": taskItems,
+		"status_job":  "active",
+	})
+
+	userRef := r.Client.Collection("users").Doc(riderID)
+	batch.Update(userRef, []firestore.Update{
+		{Path: "updated_at", Value: now},
+	})
+
+	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore
+	_, err := batch.Commit(ctx)
+	if err != nil {
+		return err
+	}
+
+	// สั่งอัปเดตข้อมูล Realtime Database ทั้งหมด
+	err = r.RTDBClient.NewRef("/").Update(ctx, rtdbUpdates)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *OrderRepository) deleteFileFromStorage(ctx context.Context, fileURL string) error {
@@ -631,96 +882,6 @@ func (r *OrderRepository) GetLocationByID(ctx context.Context, locationID string
 	return &loc, nil
 }
 
-func (r *OrderRepository) BulkAssignJobs(ctx context.Context, riderID string, jobs []models.AssignJobPayload) error {
-	if len(jobs) == 0 {
-		return nil
-	}
-
-	batch := r.Client.Batch()
-	rtdbUpdates := make(map[string]interface{})
-	now := time.Now()
-	nowUnix := now.Unix()
-
-	var taskItems []interface{}
-
-	var totalOrderSets int
-	var totalDeliveryFee float64
-
-	for _, job := range jobs {
-		// --- อัปเดตตาราง orders ---
-		orderRef := r.Client.Collection("orders").Doc(job.OrderID)
-		batch.Update(orderRef, []firestore.Update{
-			{Path: "status", Value: "ready"},
-			{Path: "rider_id", Value: riderID},
-			{Path: "queue_number", Value: job.QueueNumber},
-			{Path: "updated_at", Value: now},
-		})
-
-		taskObj := map[string]interface{}{
-			"order_id":     job.OrderID,
-			"status":       "ready",
-			"queue_number": job.QueueNumber,
-			"assigned_at":  now,
-		}
-		taskItems = append(taskItems, taskObj)
-
-		rtdbUpdates["live_orders/"+job.OrderID+"/status"] = "ready"
-		rtdbUpdates["live_orders/"+job.OrderID+"/updated_at"] = nowUnix
-		rtdbUpdates["live_jobs/"+riderID+"/"+job.OrderID] = map[string]interface{}{
-			"status":       "ready",
-			"queue_number": job.QueueNumber,
-			"updated_at":   nowUnix,
-		}
-
-		totalOrderSets += job.OrderSetQty
-		totalDeliveryFee += job.DeliveryFee
-	}
-
-	jobRef := r.Client.Collection("jobs").NewDoc()
-	jobID := jobRef.ID
-	batch.Set(jobRef, map[string]interface{}{
-		"job_id":      jobID,
-		"rider_id":    riderID,
-		"created_at":  now,
-		"updated_at":  now,
-		"active_jobs": taskItems,
-		"status_job":  "active",
-	})
-
-	userRef := r.Client.Collection("users").Doc(riderID)
-	batch.Update(userRef, []firestore.Update{
-		{Path: "updated_at", Value: now},
-	})
-
-	dateStr := now.Format("2006-01-02")
-	jobsEventID := fmt.Sprintf("%s_%s", riderID, dateStr)
-	jobsEventRef := r.Client.Collection("jobs_event").Doc(jobsEventID)
-
-	batch.Set(jobsEventRef, map[string]interface{}{
-		"rider_id":           riderID,
-		"date":               dateStr,
-		"status":             "pending",
-		"total_order_sets":   firestore.Increment(totalOrderSets),
-		"total_delivery_fee": firestore.Increment(totalDeliveryFee),
-		"updated_at":         now,
-		"job_ids":            firestore.ArrayUnion(jobID),
-	}, firestore.MergeAll)
-
-	// สั่ง Commit ข้อมูลทั้งหมดใน Firestore
-	_, err := batch.Commit(ctx)
-	if err != nil {
-		return err
-	}
-
-	// สั่งอัปเดตข้อมูล Realtime Database ทั้งหมด
-	err = r.RTDBClient.NewRef("/").Update(ctx, rtdbUpdates)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // 🌟 เปลี่ยน Return type เป็น []map[string]interface{} เพื่อคุมฟิลด์ที่จะส่งกลับเอง
 func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page int, limit int) ([]map[string]interface{}, error) {
 	now := time.Now()
@@ -798,7 +959,8 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 				"method": order.Payment.Method,
 			},
 			"totals": map[string]interface{}{
-				"grandTotal": order.Totals.GrandTotal,
+				"shippingFee": order.Totals.ShippingFee,
+				"grandTotal":  order.Totals.GrandTotal,
 			},
 			"status":     order.Status,
 			"created_at": order.CreatedAt,

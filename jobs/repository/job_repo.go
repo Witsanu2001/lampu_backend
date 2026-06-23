@@ -182,8 +182,6 @@ func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr s
 }
 
 func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateStr string) (*models.JobSummaryResponse, error) {
-
-	// 🌟 1. ค้นหาจากฟิลด์ "date" ตรงๆ ได้เลย ไม่ต้องแปลงเวลาเป็น startOfDay / startOfTomorrow แล้ว
 	query := r.client.Collection("jobs_event").
 		Where("rider_id", "==", riderID).
 		Where("date", "==", dateStr) // ใช้ dateStr ("2026-06-19") เทียบได้เลย
@@ -193,7 +191,6 @@ func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateS
 		return nil, err
 	}
 
-	// ตัวแปรเก็บยอดรวม
 	totalRounds := 0
 	totalOrderSets := 0
 	totalDeliveryFee := 0
@@ -204,11 +201,6 @@ func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateS
 			continue
 		}
 
-		// 🌟 2. นับจำนวนรอบ จากขนาดของ Array "job_ids"
-		if jobIDs, ok := eventData["job_ids"].([]interface{}); ok {
-			totalRounds += len(jobIDs)
-		}
-
 		// 🌟 3. ดึงค่าเงินจาก "total_delivery_fee"
 		if fee, ok := eventData["total_delivery_fee"].(int64); ok {
 			totalDeliveryFee += int(fee)
@@ -216,11 +208,10 @@ func (r *JobRepository) GetJobSummary(ctx context.Context, riderID string, dateS
 			totalDeliveryFee += int(feeFloat)
 		}
 
-		// 🌟 4. ดึงจำนวนชุดหมูกระทะจาก "total_order_sets"
 		if sets, ok := eventData["total_order_sets"].(int64); ok {
-			totalOrderSets += int(sets)
+			totalRounds += int(sets)
 		} else if setsFloat, ok := eventData["total_order_sets"].(float64); ok {
-			totalOrderSets += int(setsFloat)
+			totalRounds += int(setsFloat)
 		}
 	}
 

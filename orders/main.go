@@ -152,6 +152,7 @@ func main() {
 	ordersApi.Get("/orders_get/:id", orderHandler.GetOrderByID)
 	ordersApi.Get("/orders_new", orderHandler.GetNewOrders)
 	ordersApi.Get("/orders_delivery", orderHandler.GetDeliveryOrders)
+	ordersApi.Get("/orders_get/:user_id/orderByUserToday", orderHandler.GetOrderByUserToday)
 	ordersApi.Get("/orders_get/:user_id/orderByUser", orderHandler.GetByUserID)
 	ordersApi.Post("/bulk_assign", orderHandler.BulkAssignJobs)
 	ordersApi.Put("/orders_put/:id/status", orderHandler.UpdateOrderStatus)
