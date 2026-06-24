@@ -116,17 +116,11 @@ func (r *JobRepository) GetJobByID(ctx context.Context, orderID string) (*models
 	return &order, nil
 }
 
-// อย่าลืมเช็ก import ว่ามี "time" อยู่ด้วยนะครับ
 func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr string, page int, limit int) ([]models.Order, error) {
-	// ป้องกันการ Return เป็น null
 	responseList := make([]models.Order, 0)
-
-	// 🌟 1. สร้าง Base Query ค้นหาจาก Firestore
 	query := r.client.Collection("orders").
 		Where("rider_id", "==", userID).
-		Where("status", "in", []string{"delivered", "success"})
-
-	// 🌟 2. ถ้ามีการส่งวันที่มา ให้เพิ่มเงื่อนไขค้นหา
+		Where("status", "in", []string{"delivered", "pending", "success"})
 	if dateStr != "" {
 		loc, _ := time.LoadLocation("Asia/Bangkok")
 		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
@@ -140,11 +134,8 @@ func (r *JobRepository) GetHistory(ctx context.Context, userID string, dateStr s
 		query = query.Where("updated_at", ">=", startOfDay).
 			Where("updated_at", "<=", endOfDay)
 	}
-
-	// 🌟 3. เรียงลำดับจากล่าสุดไปเก่าสุด
 	query = query.OrderBy("updated_at", firestore.Desc)
 
-	// 🌟 4. ระบบ Pagination (หน้าละกี่รายการ)
 	if page < 1 {
 		page = 1
 	}
