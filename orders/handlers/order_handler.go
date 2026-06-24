@@ -506,7 +506,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	} else {
 		log.Printf("⚠️ ไม่สามารถดึงข้อมูลออเดอร์มาแสดงใน LINE ได้: %v\n", errOrder)
 	}
-	// ==========================================
 
 	var responseMsg string
 	lampuDeliveryUID := req.UserID
@@ -515,33 +514,52 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	switch finalStatus {
 	case "preparing":
 		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
-		lineMsg = "🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร" + orderDetails
+		lineMsg = "🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร"
 
 	case "refuse":
 		responseMsg = "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
-		lineMsg = "❌ ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..." + orderDetails
+		lineMsg = "❌ ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..." + order.CancelReason
 
-	case "ready":
-		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
-		lineMsg = "🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว" + orderDetails
+	// case "ready":
+	// 	responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
+	// 	lineMsg = "🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว" + orderDetails
 
 	case "cancel":
-		responseMsg = "ยกเลิกออเดอร์เรียบร้อยแล้ว ❌" // แก้ไขบัคข้อความซ้ำของเดิม
+		responseMsg = "ยกเลิกออเดอร์เรียบร้อยแล้ว ❌"
 		lineMsg = "❌ ยกเลิกออเดอร์เรียบร้อยแล้ว" + orderDetails
 
 	case "shipping":
 		responseMsg = "กำลังนำส่งอาหารให้ลูกค้า 🚀"
-		lineMsg = "🚀 กำลังนำส่งอาหารให้ลูกค้า" + orderDetails
+		if errOrder == nil {
+			if order.Payment.Method == "promptpay" {
+				lineMsg = "🚀 กำลังนำส่งหมูกระทะให้คุณ รอกินได้เลย 😋"
+			} else if order.Payment.Method == "เก็บเงินปลายทาง" {
+				lineMsg = "🚀 กำลังนำส่งหมูกระทะให้คุณ กรุณาเตรียมเงินให้พร้อมด้วยนะครับ 💵"
+			} else {
+				lineMsg = "🚀 กำลังนำส่งอาหารให้ลูกค้า"
+			}
+		} else {
+			lineMsg = "🚀 กำลังนำส่งอาหารให้ลูกค้า"
+		}
 
 	case "delivered":
 		responseMsg = "จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย 🎉"
-		lineMsg = "🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย" + orderDetails
 
-	case "pending":
-		responseMsg = "รับเงินสำเร็จ รอการเก็บเตาพรุ่งนี้ ⏳"
+		if errOrder == nil {
+			if order.Equipment.NeedEquipment {
+				lineMsg = "🎉 จัดส่งสำเร็จ กรุณาเก็บเตากับกระทะไว้ในที่ปลอดภัยพ้นจากน้ำ และตั้งในจุดที่มองเห็นง่ายด้วยนะครับ 🙏"
+			} else {
+				lineMsg = "🎉 จัดส่งสำเร็จ ขอขอบคุณที่อุดหนุนมากๆ นะครับ 🥰"
+			}
+		} else {
+			lineMsg = "🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย"
+		}
 
-	case "success":
-		responseMsg = "ออเดอร์เสร็จสมบูรณ์เรียบร้อยแล้ว 🎉"
+	// case "pending":
+	// 	responseMsg = "รับเงินสำเร็จ รอการเก็บเตาพรุ่งนี้ ⏳"
+
+	// case "success":
+	// 	responseMsg = "ออเดอร์เสร็จสมบูรณ์เรียบร้อยแล้ว 🎉"
 
 	default:
 		responseMsg = "อัปเดตสถานะเป็น " + finalStatus + " สำเร็จ"
@@ -711,8 +729,7 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// lampuDeliveryUID := riderID
-	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	lampuDeliveryUID := riderID
 
 	for _, job := range req.Jobs {
 
