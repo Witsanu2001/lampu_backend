@@ -145,18 +145,17 @@ func (r *OrderRepository) GetAllOrdersByID(ctx context.Context, userID string) (
 	return response, nil
 }
 
-// 🌟 เปลี่ยน Return type เป็น []models.SuccessOrderSummary
-func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.Time) ([]models.SuccessOrderSummary, error) {
-	// 1. คำนวณหาเวลาเริ่มต้นของวันที่ระบุ (00:00:00) และวันถัดไป
+func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.Time, page, limit int) ([]map[string]interface{}, error) {
 	startOfDay := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
 	startOfTomorrow := startOfDay.AddDate(0, 0, 1)
-
-	// 2. คิวรี Firestore
+	offset := (page - 1) * limit
 	snapshots, err := r.Client.Collection("orders").
-		Where("status", "==", "success").
+		Where("status", "in", []string{"success", "pending"}).
 		Where("CreatedAt", ">=", startOfDay).
 		Where("CreatedAt", "<", startOfTomorrow).
 		OrderBy("CreatedAt", firestore.Desc).
+		Offset(offset).
+		Limit(limit).
 		Documents(ctx).
 		GetAll()
 
@@ -164,9 +163,7 @@ func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.
 		return nil, err
 	}
 
-	// 🌟 สร้าง Array ว่างของ Struct ตัวใหม่
-	ordersSummary := make([]models.SuccessOrderSummary, 0)
-
+	var response []map[string]interface{}
 	for _, snap := range snapshots {
 		var order models.Order
 		if err := snap.DataTo(&order); err != nil {
@@ -175,29 +172,59 @@ func (r *OrderRepository) GetSuccessOrders(ctx context.Context, targetDate time.
 
 		order.ID = snap.Ref.ID
 
-		// 🌟 ประกอบร่างข้อมูล เอาเฉพาะส่วนที่อยากส่งออกไป
-		summary := models.SuccessOrderSummary{
-			OrderID:    order.ID,
-			Status:     order.Status,
-			Recipient:  order.Shipping.Recipient,
-			Address:    order.Shipping.Address,
-			GrandTotal: order.Totals.GrandTotal,
-			CreatedAt:  order.CreatedAt,
+		var mappedMainItems []map[string]interface{}
+		for _, item := range order.MainItems {
+			mappedMainItems = append(mappedMainItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
 		}
 
-		// นำไปใส่ใน Array
-		ordersSummary = append(ordersSummary, summary)
+		var mappedAddOnItems []map[string]interface{}
+		for _, item := range order.AddOnItems {
+			mappedAddOnItems = append(mappedAddOnItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
+		}
+
+		summary := map[string]interface{}{
+			"id":         order.ID,
+			"user_id":    order.UserID,
+			"mainItems":  mappedMainItems,
+			"addOnItems": mappedAddOnItems,
+			"shipping": map[string]interface{}{
+				"recipient": order.Shipping.Recipient,
+				"phone":     order.Shipping.Phone,
+				"address":   order.Shipping.Address,
+			},
+			"payment": map[string]interface{}{
+				"method":  order.Payment.Method,
+				"slip":    order.Payment.HasSlip,
+				"slipURL": order.SlipURL,
+			},
+			"totals": map[string]interface{}{
+				"addOnTotal":  order.Totals.AddOnTotal,
+				"shippingFee": order.Totals.ShippingFee,
+				"grandTotal":  order.Totals.GrandTotal,
+			},
+			"rider": map[string]interface{}{
+				"riderName": order.RiderName.DisplayName,
+			},
+			"status":     order.Status,
+			"created_at": order.CreatedAt,
+			"updated_at": order.UpdatedAt,
+		}
+
+		response = append(response, summary)
 	}
 
-	return ordersSummary, nil
+	return response, nil
 }
 
 func (r *OrderRepository) GetOrdersPDF(ctx context.Context, startDate, endDate time.Time) ([]models.Order, error) {
-	// ปรับเวลาให้คลุมตั้งแต่ 00:00:00 ถึง 23:59:59
 	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
 	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
-
-	// คิวรีดึงข้อมูลจาก Firestore
 	snapshots, err := r.Client.Collection("orders").
 		Where("status", "==", "success").
 		Where("CreatedAt", ">=", start).
@@ -992,6 +1019,12 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 				"recipient": order.Shipping.Recipient,
 				"phone":     order.Shipping.Phone,
 				"address":   order.Shipping.Address,
+			},
+			"equipment": map[string]interface{}{
+				"needEquipment": order.Equipment.NeedEquipment,
+				"stoveCount":    order.Equipment.StoveCount,
+				"panCount":      order.Equipment.PanCount,
+				"charcoalCount": order.Equipment.CharcoalCount,
 			},
 			"payment": map[string]interface{}{
 				"method": order.Payment.Method,

@@ -216,13 +216,12 @@ func (h *OrderHandler) GetAllOrdersByID(c *fiber.Ctx) error {
 func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
 	ctx := context.Background()
 
-	// 1. ดึงค่าวันที่จาก Query Parameter (เช่น ?date=2026-06-16)
+	// ดึงค่าจาก Query Parameter
 	dateStr := c.Query("date")
+	page := c.QueryInt("page", 1)    // ถ้าไม่ส่งมา ให้เป็นหน้า 1
+	limit := c.QueryInt("limit", 10) // ถ้าไม่ส่งมา ให้เป็น 10
 
-	// กำหนดวันที่จะใช้ค้นหาเริ่มต้นเป็น "วันนี้"
 	targetDate := time.Now()
-
-	// ถ้ามีการส่งวันที่เข้ามา ให้แปลง String เป็น time.Time
 	if dateStr != "" {
 		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
 		if err != nil {
@@ -234,8 +233,7 @@ func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
 		targetDate = parsedDate
 	}
 
-	// 2. ส่ง targetDate เข้าไปใน Repo
-	orders, err := h.Repo.GetSuccessOrders(ctx, targetDate)
+	orders, err := h.Repo.GetSuccessOrders(ctx, targetDate, page, limit)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{
 			Success: false,
@@ -243,11 +241,14 @@ func (h *OrderHandler) GetSuccessOrders(c *fiber.Ctx) error {
 		})
 	}
 
-	// คืนค่าสำเร็จพร้อมครอบด้วย APIResponse
 	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "ดึงข้อมูลออเดอร์สำเร็จ",
 		Data:    orders,
+		Meta: map[string]interface{}{
+			"page":  page,
+			"limit": limit,
+		},
 	})
 }
 
@@ -516,14 +517,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
 		lineMsg = "🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร"
 
-	case "refuse":
-		responseMsg = "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
-		lineMsg = "❌ ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..." + order.CancelReason
-
-	// case "ready":
-	// 	responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
-	// 	lineMsg = "🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว" + orderDetails
-
 	case "cancel":
 		responseMsg = "ยกเลิกออเดอร์เรียบร้อยแล้ว ❌"
 		lineMsg = "❌ ยกเลิกออเดอร์เรียบร้อยแล้ว" + orderDetails
@@ -555,12 +548,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 			lineMsg = "🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย"
 		}
 
-	// case "pending":
-	// 	responseMsg = "รับเงินสำเร็จ รอการเก็บเตาพรุ่งนี้ ⏳"
-
-	// case "success":
-	// 	responseMsg = "ออเดอร์เสร็จสมบูรณ์เรียบร้อยแล้ว 🎉"
-
 	default:
 		responseMsg = "อัปเดตสถานะเป็น " + finalStatus + " สำเร็จ"
 	}
@@ -582,7 +569,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	})
 }
 
-// UpdateOrderCancel จัดการการยกเลิก/ปฏิเสธออเดอร์ พร้อมรับเหตุผล
 func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
 	ctx := context.Background()
 
@@ -595,19 +581,16 @@ func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
 		})
 	}
 
-	// 2. สร้าง Struct สำหรับรับ Request Body (User ID และ Reason)
 	var req struct {
 		UserID string `json:"user_id" form:"user_id"`
 		Reason string `json:"reason" form:"reason"`
 	}
 
-	// Parsing Body
 	if err := c.BodyParser(&req); err != nil {
 		req.UserID = c.FormValue("user_id")
 		req.Reason = c.FormValue("reason")
 	}
 
-	// Validation
 	if req.UserID == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"success": false,
@@ -615,11 +598,27 @@ func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
 		})
 	}
 	if req.Reason == "" {
-		req.Reason = "ไม่ได้ระบุเหตุผล" // ป้องกันกรณีไม่ได้ส่งเหตุผลมา
+		req.Reason = "ไม่ได้ระบุเหตุผล"
 	}
 
-	// 3. เรียก Repository เพื่ออัปเดตสถานะและบันทึกเหตุผลลงฐานข้อมูล
-	// 💡 หมายเหตุ: คุณจะต้องไปสร้าง/แก้ไขฟังก์ชัน CancelOrder ใน Repo ให้รับค่า reason ด้วยนะครับ
+	// 🌟 เพิ่มเงื่อนไขต่อท้ายเหตุผลตรงนี้
+
+	// switch req.Reason {
+	// case "การชำระเงินไม่ถูกต้อง":
+	// 	req.Reason += " กรุณาแก้ไขชำระเงินให้ถูกต้อง"
+	// case "อยู่นอกพื้นที่ให้บริการ":
+	// 	req.Reason += " กรุณาเปลี่ยนตำแหน่งและนัดรับออเดอร์แทน"
+	// case "วัตถุดิบหมด", "สินค้าหมด / วัตถุดิบไม่พอ":
+	// 	req.Reason += " ไว้โอกาสหน้านะคะ ต้องขออภัยด้วยคะ"
+	// }
+
+	switch req.Reason {
+	case "การชำระเงินไม่ถูกต้อง":
+		req.Reason += " กรุณาแก้ไขชำระเงินให้ถูกต้อง"
+	case "วัตถุดิบหมด", "สินค้าหมด / วัตถุดิบไม่พอ":
+		req.Reason += " ไว้โอกาสหน้านะคะ ต้องขออภัยด้วยคะ"
+	}
+
 	err := h.Repo.CancelOrder(ctx, orderID, req.Reason, req.UserID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -628,14 +627,10 @@ func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
 		})
 	}
 
-	// 4. เตรียมข้อความแจ้งเตือน
 	responseMsg := "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
-
-	// นำเหตุผลมาใส่ในข้อความ LINE ด้วย
 	lineMsg := fmt.Sprintf("❌ ร้านปฏิเสธ/ยกเลิกออเดอร์\nเลขออเดอร์: %s\nเหตุผล: %s", orderID, req.Reason)
 	lampuDeliveryUID := req.UserID
 
-	// 5. ส่ง LINE Notification
 	if lineMsg != "" {
 		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
 		errLine := utils.SendOrderUserNotification(lampuDeliveryUID, lineMsg)
@@ -646,7 +641,6 @@ func (h *OrderHandler) UpdateOrderCancel(c *fiber.Ctx) error {
 		}
 	}
 
-	// 6. ส่ง Response กลับไปให้ Frontend
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": responseMsg,
@@ -693,6 +687,15 @@ func (h *OrderHandler) UpdateEditSlips(c *fiber.Ctx) error {
 			Success: false,
 			Message: "Failed to update order with new slip: " + err.Error(),
 		})
+	}
+
+	adminUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	lineMsg := fmt.Sprintf("⚠️ แจ้งเตือน: มีลูกค้าอัปโหลดสลิปมาใหม่!\nเลขออเดอร์: %s\nกรุณาตรวจสอบและยืนยันออเดอร์ในระบบ", orderID)
+	errLine := utils.SendOrderAdminNotification(adminUID, lineMsg)
+	if errLine != nil {
+		log.Printf("❌ ส่ง LINE แจ้งเตือนแอดมินขัดข้อง Error: %v\n", errLine)
+	} else {
+		log.Println("✅ ส่ง LINE แจ้งเตือนแอดมินสำเร็จเรียบร้อย!")
 	}
 
 	// 5. ส่ง Response กลับ
