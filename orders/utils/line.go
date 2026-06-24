@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"log"
+	"orders/models"
 
 	"github.com/line/line-bot-sdk-go/v7/linebot"
 )
@@ -62,20 +63,59 @@ func SendOrderUserNotification(adminUID string, orderDetails string) error {
 	return nil
 }
 
-func SendOrderRiderNotification(adminUID string, orderDetails string) error {
-	// ใส่ Token ของคุณ
+func SendOrderRiderNotification(riderUID string, mainItems []models.Item, grandTotal float64, paymentMethod string, lat float64, lng float64) error {
 	bot, err := linebot.New("125bcfec8cc54507f8b01df805b58bbf", "EH23/1aroL1pZ1gtRKc0eFu7fiYieMlGkKzrSldkHPvdn21tlbfVUQ9KmurIbInY6lKQkQ7MfzYDtC4fe1jk2emvyPICyWBr8k2bbn8ALkv50ctx+/yxVTZhkDK4IqRG+rodTN8eqhWnpM1Nopr9MwdB04t89/1O/w1cDnyilFU=")
 	if err != nil {
 		return fmt.Errorf("failed to create line bot: %v", err)
 	}
+	itemsStr := ""
+	for _, item := range mainItems {
+		itemsStr += fmt.Sprintf("- %s (x%d)\n", item.Name, item.Quantity)
+	}
+	itemsStr += fmt.Sprintf("💰 ยอดรวม: %.2f บาท\n💳 ชำระเงิน: %s", grandTotal, paymentMethod)
+	mapsURL := fmt.Sprintf("https://maps.google.com/maps?q=%f,%f", lat, lng)
+	container := &linebot.BubbleContainer{
+		Type: linebot.FlexContainerTypeBubble,
+		Body: &linebot.BoxComponent{
+			Type:   linebot.FlexComponentTypeBox,
+			Layout: linebot.FlexBoxLayoutTypeVertical,
+			Contents: []linebot.FlexComponent{
+				&linebot.TextComponent{
+					Type:   linebot.FlexComponentTypeText,
+					Text:   "🔔 มีออเดอร์ใหม่เข้า!",
+					Weight: linebot.FlexTextWeightTypeBold,
+					Size:   linebot.FlexTextSizeTypeLg,
+				},
+				&linebot.TextComponent{
+					Type:   linebot.FlexComponentTypeText,
+					Text:   itemsStr,
+					Wrap:   true, // ยอมให้ตัดขึ้นบรรทัดใหม่ได้ถ้าข้อความยาวเกิน
+					Margin: linebot.FlexComponentMarginTypeMd,
+				},
+			},
+		},
+		Footer: &linebot.BoxComponent{
+			Type:   linebot.FlexComponentTypeBox,
+			Layout: linebot.FlexBoxLayoutTypeVertical,
+			Contents: []linebot.FlexComponent{
+				&linebot.ButtonComponent{
+					Type:   linebot.FlexComponentTypeButton,
+					Style:  linebot.FlexButtonStyleTypePrimary, // ปุ่มสีทึบ
+					Action: linebot.NewURIAction("📍 กดเปิด Google Maps", mapsURL),
+				},
+			},
+		},
+	}
 
-	message := linebot.NewTextMessage(orderDetails)
+	// ห่อ Flex Message
+	flexMsg := linebot.NewFlexMessage("🔔 มีออเดอร์ใหม่เข้า!", container)
 
-	_, err = bot.PushMessage(adminUID, message).Do()
+	// 4. สั่งยิงข้อความ (ส่งไปกล่องเดียวจบ)
+	_, err = bot.PushMessage(riderUID, flexMsg).Do()
 	if err != nil {
 		return fmt.Errorf("failed to push message: %v", err)
 	}
 
-	log.Println("ส่งแจ้งเตือนเข้า LINE ร้านเรียบร้อย!")
+	log.Println("✅ ส่งแจ้งเตือนออเดอร์พร้อมปุ่มแผนที่เข้า LINE ไรเดอร์เรียบร้อย!")
 	return nil
 }

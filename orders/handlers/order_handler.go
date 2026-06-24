@@ -141,11 +141,11 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 
 	lampuAdminUID := "U9728d3e3d66a3af73ee87768874cee0d"
 
-	lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง: %s",
+	lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้า!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง: %s",
 		order.ID,
 		order.Totals.GrandTotal,
 		order.Payment.Method,
-		order.Shipping.Recipient)
+		order.Shipping.Address)
 
 	// ✨ ลบคำว่า 'go' ออก แล้วเขียนรับค่า Error ตรงๆ พร้อมพิมพ์ Log ก่อนและหลังส่ง
 	log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuAdminUID)
@@ -476,7 +476,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	// 🌟 รับค่า finalStatus มาจาก Repository
 	finalStatus, err := h.Repo.UpdateOrderStatus(ctx, orderID, req.Status, req.UserID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -485,35 +484,58 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		})
 	}
 
+	order, errOrder := h.Repo.GetOrderByID(ctx, orderID)
+	var orderDetails string
+
+	if errOrder == nil {
+		orderDetails = "\n\n📋 รายการอาหาร:"
+
+		for _, item := range order.MainItems {
+			orderDetails += fmt.Sprintf("\n- %s", item.Name)
+		}
+
+		if len(order.AddOnItems) > 0 {
+			orderDetails += "\n\n➕ เพิ่มเติม:"
+			for _, item := range order.AddOnItems {
+				orderDetails += fmt.Sprintf("\n- %s", item.Name)
+			}
+		}
+
+		orderDetails += fmt.Sprintf("\n\n💰 ยอดรวม: %.2f บาท", order.Totals.GrandTotal)
+		orderDetails += fmt.Sprintf("\n💳 ชำระเงิน: %s", order.Payment.Method)
+	} else {
+		log.Printf("⚠️ ไม่สามารถดึงข้อมูลออเดอร์มาแสดงใน LINE ได้: %v\n", errOrder)
+	}
+	// ==========================================
+
 	var responseMsg string
 	lampuDeliveryUID := req.UserID
-
 	var lineMsg string
 
 	switch finalStatus {
 	case "preparing":
 		responseMsg = "รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร 🥘"
-		lineMsg = fmt.Sprintf("🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร\nเลขออเดอร์: %s", orderID)
+		lineMsg = "🥘 รับออเดอร์เรียบร้อยแล้ว กำลังเตรียมอาหาร" + orderDetails
 
 	case "refuse":
 		responseMsg = "ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว ❌"
-		lineMsg = "🥘 ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..."
+		lineMsg = "❌ ปฏิเสธออเดอร์นี้เรียบร้อยแล้ว เนื่องจาก..." + orderDetails
 
 	case "ready":
 		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
-		lineMsg = fmt.Sprintf("🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว\nเลขออเดอร์: %s", orderID)
+		lineMsg = "🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว" + orderDetails
 
 	case "cancel":
-		responseMsg = "มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว 🛵"
-		lineMsg = fmt.Sprintf("🛵 มอบหมายงานสำเร็จ อาหารพร้อมส่งแล้ว\nเลขออเดอร์: %s", orderID)
+		responseMsg = "ยกเลิกออเดอร์เรียบร้อยแล้ว ❌" // แก้ไขบัคข้อความซ้ำของเดิม
+		lineMsg = "❌ ยกเลิกออเดอร์เรียบร้อยแล้ว" + orderDetails
 
 	case "shipping":
 		responseMsg = "กำลังนำส่งอาหารให้ลูกค้า 🚀"
-		lineMsg = fmt.Sprintf("🚀 กำลังนำส่งอาหารให้ลูกค้า\nเลขออเดอร์: %s", orderID)
+		lineMsg = "🚀 กำลังนำส่งอาหารให้ลูกค้า" + orderDetails
 
 	case "delivered":
 		responseMsg = "จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย 🎉"
-		lineMsg = fmt.Sprintf("🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย\nเลขออเดอร์: %s", orderID)
+		lineMsg = "🎉 จัดส่งสำเร็จ ปิดออเดอร์เรียบร้อย" + orderDetails
 
 	case "pending":
 		responseMsg = "รับเงินสำเร็จ รอการเก็บเตาพรุ่งนี้ ⏳"
@@ -525,7 +547,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 		responseMsg = "อัปเดตสถานะเป็น " + finalStatus + " สำเร็จ"
 	}
 
-	// ⚡ ยุบโค้ดส่ง LINE ให้กระชับขึ้น (ส่งเฉพาะสถานะที่มีการจัดเตรียม lineMsg ไว้)
 	if lineMsg != "" {
 		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
 		errLine := utils.SendOrderUserNotification(lampuDeliveryUID, lineMsg)
@@ -539,7 +560,7 @@ func (h *OrderHandler) UpdateOrderStatus(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": responseMsg,
-		"status":  finalStatus, // ส่ง status ล่าสุดกลับไปให้หน้าบ้านเผื่อนำไปอัปเดต UI ด้วย
+		"status":  finalStatus,
 	})
 }
 
@@ -667,7 +688,6 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 	ctx := context.Background()
 	var req models.BulkAssignRequest
 
-	// แปลง JSON ก้อนใหญ่ที่ส่งมา
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
@@ -691,26 +711,24 @@ func (h *OrderHandler) BulkAssignJobs(c *fiber.Ctx) error {
 		})
 	}
 
-	// 🌟 นำ riderID มาใช้เป็น UID สำหรับส่ง LINE
-	lampuDeliveryUID := riderID
+	// lampuDeliveryUID := riderID
+	lampuDeliveryUID := "U9728d3e3d66a3af73ee87768874cee0d"
 
 	for _, job := range req.Jobs {
 
 		orderData, err := h.Repo.GetOrderByID(ctx, job.OrderID)
 		if err != nil {
-			log.Printf("❌ ข้ามการส่ง LINE: ไม่พบข้อมูลออเดอร์ %s หรือดึงข้อมูลล้มเหลว: %v", job.OrderID, err)
 			continue
 		}
 
-		lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้าครับ!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง (กดเพื่อดูแผนที่): \nhttps://maps.google.com/?q=%f,%f",
-			orderData.ID,
+		errLine := utils.SendOrderRiderNotification(
+			lampuDeliveryUID,
+			orderData.MainItems,
 			orderData.Totals.GrandTotal,
 			orderData.Payment.Method,
 			orderData.Shipping.Location.Lat,
-			orderData.Shipping.Location.Lng)
-
-		log.Println("⏳ กำลังพยายามส่ง LINE ไปที่ UID:", lampuDeliveryUID)
-		errLine := utils.SendOrderRiderNotification(lampuDeliveryUID, lineMsg)
+			orderData.Shipping.Location.Lng,
+		)
 
 		if errLine != nil {
 			log.Printf("❌ ส่ง LINE ขัดข้องสำหรับออเดอร์ %s Error: %v\n", job.OrderID, errLine)
