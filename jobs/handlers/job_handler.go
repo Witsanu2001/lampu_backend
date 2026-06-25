@@ -212,10 +212,7 @@ func (h *JobHandler) GetStoveSuccess(c *fiber.Ctx) error {
 }
 
 func (h *JobHandler) GetStoveByRiderId(c *fiber.Ctx) error {
-	// 🌟 1. ดึงจาก URL Parameters ก่อน (?rider_id=xxxx)
 	riderID := c.Query("rider_id")
-
-	// 🌟 2. ถ้าไม่ได้ส่งทาง URL มา ให้ใช้ ID จากคนที่ล็อกอิน (Token)
 	if riderID == "" {
 		if tokenID, ok := c.Locals("user_id").(string); ok {
 			riderID = tokenID
@@ -228,18 +225,43 @@ func (h *JobHandler) GetStoveByRiderId(c *fiber.Ctx) error {
 		})
 	}
 
-	// เรียกใช้ฟังก์ชันจาก Repository
-	jobs, err := h.repo.GetStoveByRiderId(c.Context(), riderID)
+	pageStr := c.Query("page", "1")
+	limitStr := c.Query("limit", "10")
+
+	// 🌟 2. แปลงเป็นตัวเลข (int)
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1 // ถ้าส่งมาผิดรูปแบบ หรือติดลบ ให้เป็นหน้า 1 เสมอ
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 10 // ถ้าส่งมาผิดรูปแบบ ให้จำกัดที่ 10 รายการ
+	}
+	if limit > 100 {
+		limit = 100 // ป้องกันโดนยิง request ขอทีละล้านรายการ (Max 100)
+	}
+
+	// 🌟 3. ส่ง page และ limit เข้าไปใน Repo
+	jobs, err := h.repo.GetStoveByRiderId(c.Context(), riderID, page, limit)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch jobs with details: " + err.Error(),
 		})
 	}
 
+	// 🌟 4. ส่งกลับไปพร้อม Metadata เพื่อให้ Frontend รู้ว่าอยู่หน้าไหน
 	return c.Status(fiber.StatusOK).JSON(utils.APIResponse{
 		Success: true,
 		Message: "success",
-		Data:    jobs,
+		Data: fiber.Map{
+			"items": jobs,
+			"meta": fiber.Map{
+				"page":  page,
+				"limit": limit,
+				"count": len(jobs),
+			},
+		},
 	})
 }
 

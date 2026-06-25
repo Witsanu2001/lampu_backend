@@ -319,16 +319,14 @@ func (r *OrderRepository) GetOrdersByUserID(ctx context.Context, userID string) 
 }
 
 func (r *OrderRepository) GetOrderByUserToday(ctx context.Context, userID string) ([]map[string]interface{}, error) {
-	// 🌟 1. คำนวณหาเวลาเริ่มต้นของวันนี้ (00:00:00) และวันพรุ่งนี้ (00:00:00)
 	now := time.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	startOfTomorrow := startOfToday.Add(24 * time.Hour)
 
-	// 🌟 2. เพิ่ม Where กรองเวลาเข้าไปใน Query
 	snapshots, err := r.Client.Collection("orders").
 		Where("user_id", "==", userID).
-		Where("CreatedAt", ">=", startOfToday).   // ตั้งแต่เริ่มวัน
-		Where("CreatedAt", "<", startOfTomorrow). // จนถึงก่อนเริ่มวันพรุ่งนี้
+		Where("CreatedAt", ">=", startOfToday).
+		Where("CreatedAt", "<", startOfTomorrow).
 		OrderBy("CreatedAt", firestore.Desc).
 		Documents(ctx).
 		GetAll()
@@ -420,7 +418,6 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		return "", err
 	}
 
-	// 🌟 1. ดักจับสถานะที่ส่งเข้ามาจริงๆ และแยกตัวแปรไม่ให้ปนกับตอนถูกแปลงอัตโนมัติ
 	incomingStatus := strings.ToLower(strings.TrimSpace(status))
 	finalStatus := incomingStatus
 
@@ -430,7 +427,6 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		isCanceled = true
 	}
 
-	// 🌟 เงื่อนไขเปลี่ยนสถานะอัตโนมัติ
 	if finalStatus == "delivered" {
 		if strings.ToLower(order.Payment.Method) == "promptpay" {
 			finalStatus = "pending"
@@ -441,7 +437,6 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID string,
 		if !order.Equipment.NeedEquipment {
 			finalStatus = "success"
 
-			// 🌟 1. อัปเดตสถานะ "" ลงใน jobs_event ทันที
 			loc := time.FixedZone("UTC+7", 7*3600)
 			todayStr := time.Now().In(loc).Format("2006-01-02")
 
@@ -995,10 +990,7 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 		return false
 	})
 
-	// นำ orders ไปประมวลผลหารายชื่อ Rider ตามปกติ
 	r.attachRiderNames(ctx, orders, riderRefsMap)
-
-	// 🌟 กำหนดฟิลด์ที่จะส่งไปให้หน้าบ้านตรงนี้เลย!
 	var response []map[string]interface{}
 
 	for _, order := range orders {
@@ -1011,10 +1003,19 @@ func (r *OrderRepository) GetNewOrders(ctx context.Context, userID string, page 
 			})
 		}
 
+		var mappedAddOnItems []map[string]interface{}
+		for _, item := range order.AddOnItems {
+			mappedAddOnItems = append(mappedAddOnItems, map[string]interface{}{
+				"name":     item.Name,
+				"quantity": item.Quantity,
+			})
+		}
+
 		mappedOrder := map[string]interface{}{
-			"id":        order.ID,
-			"user_id":   order.UserID,
-			"mainItems": mappedMainItems,
+			"id":         order.ID,
+			"user_id":    order.UserID,
+			"mainItems":  mappedMainItems,
+			"addOnItems": mappedAddOnItems,
 			"shipping": map[string]interface{}{
 				"recipient": order.Shipping.Recipient,
 				"phone":     order.Shipping.Phone,

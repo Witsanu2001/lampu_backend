@@ -774,11 +774,9 @@ func (h *OrderHandler) GetNewOrders(c *fiber.Ctx) error {
 		})
 	}
 
-	// 🌟 รับค่า page และ limit จาก Query String (กำหนดค่า Default เป็น page=1, limit=10)
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "10"))
 
-	// 🌟 ส่ง page และ limit ไปให้ Repo ด้วย
 	orders, err := h.Repo.GetNewOrders(ctx, userID, page, limit)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(utils.APIResponse{

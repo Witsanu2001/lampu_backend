@@ -428,15 +428,18 @@ func (r *JobRepository) GetStoveSuccess(ctx context.Context, userID string, date
 	return responseList, nil
 }
 
-func (r *JobRepository) GetStoveByRiderId(ctx context.Context, userID string) ([]models.StoveDetailResponse, error) {
+func (r *JobRepository) GetStoveByRiderId(ctx context.Context, userID string, page int, limit int) ([]models.StoveDetailResponse, error) {
 	responseList := make([]models.StoveDetailResponse, 0)
 
-	// 🌟 ใช้ "in" และส่งค่าเป็น Slice []string เพื่อบอกว่าเอาสถานะไหนบ้าง
-	iter := r.client.Collection("orders").
+	// คำนวณจุดเริ่มต้นของการดึงข้อมูล (Offset)
+	offset := (page - 1) * limit
+
+	query := r.client.Collection("orders").
 		Where("status", "in", []string{"pending", "stoveFalse"}).
-		Where("rider_id", "==", userID).
-		Documents(ctx)
-	defer iter.Stop() // ปิด iterator เมื่อทำงานเสร็จ
+		Where("rider_id", "==", userID)
+
+	iter := query.Offset(offset).Limit(limit).Documents(ctx)
+	defer iter.Stop()
 
 	for {
 		doc, err := iter.Next()
@@ -449,15 +452,14 @@ func (r *JobRepository) GetStoveByRiderId(ctx context.Context, userID string) ([
 
 		var order models.Order
 		if err := doc.DataTo(&order); err != nil {
-			continue // ข้ามอันที่แปลงข้อมูลไม่ได้ไป
+			continue
 		}
 
-		// เผื่อในเอกสารไม่มีฟิลด์ ID บันทึกไว้ ให้ใช้ Document ID เป็น OrderID
 		if order.ID == "" {
 			order.ID = doc.Ref.ID
 		}
 
-		// 3. Map ข้อมูลใส่โครงสร้าง Response
+		// Map ข้อมูลใส่โครงสร้าง Response
 		detailRes := models.StoveDetailResponse{
 			OrderID: order.ID,
 			Status:  order.Status,
