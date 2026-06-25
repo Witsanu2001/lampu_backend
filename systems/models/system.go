@@ -24,4 +24,5 @@ type SystemSettingsPayload struct {
 	CloseTime        string           `json:"closeTime"`
 	ClosedDays       ClosedDays       `json:"closedDays"`
 	SpecialHolidays  []SpecialHoliday `json:"specialHolidays"`
+	PIN              string           `json:"PIN"`
 }

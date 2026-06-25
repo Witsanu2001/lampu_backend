@@ -72,3 +72,48 @@ func (h *SystemHandler) GetSystem(c *fiber.Ctx) error {
 		"data":    settings,
 	})
 }
+
+func (h *SystemHandler) CheckPin(c *fiber.Ctx) error {
+	type Request struct {
+		Project string `json:"project"`
+		PIN     string `json:"PIN"`
+	}
+	var req Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Invalid body"})
+	}
+
+	settings, err := h.repo.GetSettings(c.Context(), req.Project)
+	if err != nil || settings.PIN != req.PIN {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "PIN ไม่ถูกต้อง"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true})
+}
+
+// อัปเดต PIN
+func (h *SystemHandler) UpdatePin(c *fiber.Ctx) error {
+	type Request struct {
+		Project string `json:"project"`
+		OldPIN  string `json:"oldPIN"`
+		NewPIN  string `json:"newPIN"`
+	}
+	var req Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Invalid body"})
+	}
+
+	// เช็ค PIN เดิมก่อน
+	settings, err := h.repo.GetSettings(c.Context(), req.Project)
+	if err != nil || settings.PIN != req.OldPIN {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "รหัส PIN เดิมไม่ถูกต้อง"})
+	}
+
+	// อัปเดต PIN ใหม่
+	err = h.repo.UpdatePIN(c.Context(), req.Project, req.NewPIN)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "อัปเดตไม่สำเร็จ"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true, "message": "เปลี่ยน PIN สำเร็จ"})
+}

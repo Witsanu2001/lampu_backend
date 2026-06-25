@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"systems/handlers"
 	"systems/repository"
 
@@ -13,6 +14,36 @@ import (
 	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
 )
+
+func AuthMiddleware(appFirebase *firebase.App, sysRepo *repository.SystemRepository) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "Missing token"})
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		ctx := context.Background()
+
+		authClient, err := appFirebase.Auth(ctx)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "Auth client error"})
+		}
+
+		tokenInfo, err := authClient.VerifyIDToken(ctx, token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "Invalid token"})
+		}
+
+		role, err := sysRepo.GetUserRole(ctx, tokenInfo.UID)
+		if err != nil || role != "admin" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "Requires admin role"})
+		}
+
+		c.Locals("user_id", tokenInfo.UID)
+		return c.Next()
+	}
+}
 
 func initFirebase() *firebase.App {
 	ctx := context.Background()
@@ -71,8 +102,11 @@ func main() {
 	sysRepo := repository.NewSystemRepository(firestoreClient, rtdbClient)
 	sysHandler := handlers.NewSystemHandler(sysRepo)
 
-	SystemsApi.Get("/systems", sysHandler.GetSystem)
-	SystemsApi.Post("/systems_add", sysHandler.AddSystem)
+	SystemsApi.Get("/systems", AuthMiddleware(appFirebase, sysRepo), sysHandler.GetSystem)
+	SystemsApi.Post("/systems_add", AuthMiddleware(appFirebase, sysRepo), sysHandler.AddSystem)
+
+	SystemsApi.Post("/check_pin", AuthMiddleware(appFirebase, sysRepo), sysHandler.CheckPin)
+	SystemsApi.Post("/update_pin", AuthMiddleware(appFirebase, sysRepo), sysHandler.UpdatePin)
 
 	SystemsApi.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
