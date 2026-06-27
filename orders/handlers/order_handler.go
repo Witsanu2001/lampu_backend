@@ -139,7 +139,7 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	lampuAdminUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	lampuAdminUID := "U2602a6fd62d878c0729696dfa9c3d128"
 
 	lineMsg := fmt.Sprintf("🔔 มีออเดอร์ใหม่เข้า!\nเลขออเดอร์: %s\nยอดรวม: %.2f บาท\nช่องทางชำระเงิน: %s\nพิกัดจัดส่ง: %s",
 		order.ID,
@@ -689,7 +689,7 @@ func (h *OrderHandler) UpdateEditSlips(c *fiber.Ctx) error {
 		})
 	}
 
-	adminUID := "U9728d3e3d66a3af73ee87768874cee0d"
+	adminUID := "U2602a6fd62d878c0729696dfa9c3d128"
 	lineMsg := fmt.Sprintf("⚠️ แจ้งเตือน: มีลูกค้าอัปโหลดสลิปมาใหม่!\nเลขออเดอร์: %s\nกรุณาตรวจสอบและยืนยันออเดอร์ในระบบ", orderID)
 	errLine := utils.SendOrderAdminNotification(adminUID, lineMsg)
 	if errLine != nil {
